@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Process Sync Simulator | OS Lab</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Orbitron:wght@400;600;700&family=Outfit:wght@300;400;600;700&display=swap"
+    rel="stylesheet"
+  >
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body class="vc-theme">
+
+  <!-- animated bg elements removed (clean light theme) -->
+
+  <!-- ===== HEADER ===== -->
+  <header class="mission-header">
+
+    <div class="logo">
+      <span class="logo-icon pulse">⟳</span>
+      <div>
+        <h1>PROCESS SYNC SIMULATOR</h1>
+        <p>OS Lab · CPU Scheduling + Process Synchronization</p>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <div class="mission-stepper" id="mission-stepper">
+        <div class="step active" data-phase="1"><span>01</span> Scheduling</div>
+        <div class="step-connector"></div>
+        <div class="step locked" data-phase="2"><span>02</span> Problems</div>
+        <div class="step-connector"></div>
+        <div class="step locked" data-phase="3"><span>03</span> Synchronization</div>
+        <div class="step-connector"></div>
+        <div class="step locked" data-phase="4"><span>04</span> Analysis</div>
+      </div>
+      <button class="btn-theme-toggle" id="btn-theme-toggle" title="Toggle dark / light mode">
+        <span class="theme-icon" id="theme-icon">🌙</span>
+        <span id="theme-label">Dark</span>
+      </button>
+    </div>
+
+  </header>
+
+  <!-- ===== GLOBAL CONTROLS ===== -->
+  <div class="global-controls glow-card">
+
+    <div class="control-group">
+      <label class="ctrl-check">
+        <input type="checkbox" id="slow-teach-mode" checked>
+        Slow teaching mode
+      </label>
+      <label class="ctrl-check">
+        <input type="checkbox" id="auto-gantt" checked>
+        Auto-build Gantt
+      </label>
+      <label class="ctrl-check">
+        <input type="checkbox" id="auto-advance">
+        Auto-advance phases
+      </label>
+    </div>
+
+    <div class="control-group speed-group">
+      <label>
+        Teaching speed
+        <span class="speed-hint">(1 = slow · 10 = fast)</span>
+        <input type="range" id="global-speed" min="1" max="10" value="3">
+      </label>
+      <span id="speed-label" class="speed-val">Slow+</span>
+    </div>
+
+    <div class="control-group actions">
+      <button class="btn primary glow-btn" id="btn-full-mission">▶ Run All (Auto)</button>
+      <button class="btn" id="btn-reset-mission">↺ Reset</button>
+    </div>
+
+  </div>
+
+  <!-- ===== WORKFLOW BANNER ===== -->
+  <div class="concept-banner">
+    <strong>Workflow:</strong>
+    Process Creation
+    → <strong>01</strong> CPU Scheduling
+    → <strong>02</strong> Shared Access Without Sync (Problems)
+    → <strong>03</strong> Synchronization Applied (Resolved)
+    → <strong>04</strong> Analysis &amp; Report
+    <span class="state-legend">
+      <i class="dot ready"></i>Ready
+      <i class="dot run"></i>Running
+      <i class="dot wait"></i>Waiting
+      <i class="dot block"></i>Blocked
+      <i class="dot term"></i>Terminated
+    </span>
+  </div>
+
+  <!-- ===== MAIN ===== -->
+  <main class="mission-main">
+
+    <!-- ================================================= -->
+    <!-- PHASE 1 — Process Creation + CPU Scheduling       -->
+    <!-- ================================================= -->
+    <section id="phase-1" class="mission-phase active">
+      <div class="phase-grid">
+
+        <!-- LEFT: Controls -->
+        <aside class="control-card hud-card glow-card sidebar-panel">
+
+          <h2><span class="module-tag">P1</span> CPU Scheduling</h2>
+
+          <p class="hint">
+            Define your processes and choose scheduling algorithms.
+            The algorithm with the lowest average waiting time drives all
+            subsequent phases.
+          </p>
+
+          <div id="sched-algorithm-checks" class="algo-checks compact"></div>
+
+          <div id="quantum-wrap" class="quantum-wrap hidden">
+            <label>
+              Time Quantum
+              <input type="number" id="sched-quantum" value="2" min="1" max="10">
+            </label>
+          </div>
+
+          <h3 class="section-label">Process Input Table</h3>
+
+          <div class="proc-input-box">
+            <div class="proc-table-head">
+              <span>PID</span><span>AT</span><span>BT</span><span>Pri</span><span></span>
+            </div>
+            <div id="process-inputs" class="process-inputs"></div>
+          </div>
+
+          <button class="btn small" id="btn-add-process">+ Process</button>
+          <button class="btn small ghost" id="btn-load-demo">Demo data</button>
+
+          <div class="btn-row stacked">
+            <button class="btn primary glow-btn" id="btn-phase1-run">▶ Run Scheduling</button>
+            <button class="btn" id="btn-phase1-play"  disabled>⏵ Play Gantt</button>
+            <button class="btn" id="btn-phase1-step"  disabled>Step +1</button>
+            <button class="btn" id="btn-phase1-pause" disabled>⏸ Pause</button>
+          </div>
+
+          <div id="phase1-tutor-log" class="tutor-log"></div>
+
+        </aside>
+
+        <!-- RIGHT: Visualization -->
+        <div class="viz-column">
+
+          <div id="phase1-insights" class="insights-panel"></div>
+
+          <!-- Gantt Chart -->
+          <div class="card hud-card glow-card gantt-card">
+            <div class="card-header">
+              <h3>Gantt Chart</h3>
+              <span id="sched-algo-badge" class="badge">—</span>
+            </div>
+            <div class="progress-track"><div id="gantt-progress-bar" class="progress-fill"></div></div>
+            <span id="gantt-progress-label" class="progress-label">Waiting…</span>
+            <div class="gantt-wrap"><canvas id="sched-canvas"></canvas></div>
+            <div id="gantt-legend" class="gantt-legend"></div>
+          </div>
+
+          <!-- Performance Metrics -->
+          <div class="card hud-card glow-card">
+            <h3>Performance Metrics <span class="subtitle">Primary algorithm averages</span></h3>
+            <div id="sched-avg-stats" class="avg-stats-rings"></div>
+            <dl class="metric-defs metric-defs--grid">
+              <div><dt>CT — Completion Time</dt><dd>When the process finishes.</dd></div>
+              <div><dt>TAT — Turnaround Time</dt><dd>CT − Arrival Time.</dd></div>
+              <div><dt>WT — Waiting Time</dt><dd>TAT − Burst Time.</dd></div>
+              <div><dt>RT — Response Time</dt><dd>First run − Arrival Time.</dd></div>
+            </dl>
+          </div>
+
+          <!-- Per-Algorithm Tables -->
+          <div id="sched-all-algo-tables" class="sched-all-algo-tables"></div>
+
+          <!-- Comparison Chart (multi-algo only) -->
+          <div class="card hud-card glow-card" id="sched-compare-card" style="display:none">
+            <h3>Algorithm Comparison</h3>
+            <div class="table-scroll"><table class="metrics-table" id="sched-compare-table"></table></div>
+            <div class="chart-row">
+              <div class="chart-box"><canvas id="sched-compare-chart-wt"></canvas></div>
+              <div class="chart-box"><canvas id="sched-compare-chart-tat"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Proceed -->
+          <div class="proceed-bar" id="proceed-phase2" style="display:none">
+            <button class="btn primary glow-btn" id="btn-proceed-phase2">
+              Next: Synchronization Problems →
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================= -->
+    <!-- PHASE 2 — Shared Resource Access Without Sync     -->
+    <!--            Demonstrates the problems that arise   -->
+    <!-- ================================================= -->
+    <section id="phase-2" class="mission-phase">
+      <div class="phase-grid">
+
+        <!-- LEFT: Context + Controls -->
+        <aside class="control-card hud-card glow-card sidebar-panel">
+
+          <h2><span class="module-tag warn">P2</span> Without Synchronization</h2>
+
+          <p class="hint">
+            The <strong>same processes</strong> from Phase 1 now access shared
+            resources <strong>without any synchronization</strong>. The CPU
+            schedule's interleaving exposes the concurrency problems below.
+          </p>
+
+          <!-- Input data context from Phase 1 -->
+          <div class="card hud-card" style="padding:0.75rem;margin-bottom:0.9rem">
+            <h4 class="section-label" style="margin-top:0">Input Data (Phase 1)</h4>
+            <div id="phase2-process-context" class="proc-ctx-chips">
+              <span style="font-size:0.68rem;color:var(--muted)">
+                Run Phase 1 first to populate this.
+              </span>
+            </div>
+          </div>
+
+          <div class="btn-row stacked">
+            <button class="btn primary glow-btn" id="btn-phase2-run">
+              ▶ Detect Problems
+            </button>
+          </div>
+
+        </aside>
+
+        <!-- RIGHT: Detection Results -->
+        <div class="viz-column">
+
+          <div class="card hud-card glow-card detect-card">
+            <div class="card-header">
+              <h3>Problems Exposed Without Synchronization</h3>
+              <span class="badge">Unsynchronized concurrent access</span>
+            </div>
+            <p id="detection-summary" class="hint">
+              Run scheduling (Phase 1) then click "Detect Problems" — problems that
+              arise from concurrent unsynchronized access to shared resources will
+              appear here.
+            </p>
+            <div id="detection-grid" class="detection-grid"></div>
+          </div>
+
+          <!-- Proceed -->
+          <div class="proceed-bar" id="proceed-phase3" style="display:none">
+            <button class="btn primary glow-btn" id="btn-proceed-phase3">
+              Next: Apply Synchronization →
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================= -->
+    <!-- PHASE 3 — Process Synchronization Module          -->
+    <!--   Simulate mutex / semaphore / monitor on the     -->
+    <!--   same workload; compare all techniques           -->
+    <!-- ================================================= -->
+    <section id="phase-3" class="mission-phase">
+
+      <!-- Module header + problem context from Phase 2 -->
+      <div class="card hud-card glow-card" style="margin-bottom:1.25rem">
+        <div class="card-header">
+          <h3><span class="module-tag sync">P3</span> Process Synchronization</h3>
+          <span class="badge">Critical section protection</span>
+        </div>
+        <p class="hint">
+          Apply synchronization mechanisms — mutexes, semaphores, monitors, and locks —
+          to the <strong>same processes and shared resources</strong> from Phase 1.
+          Observe how each mechanism protects the critical section and resolves the
+          problems detected in Phase 2.
+        </p>
+        <div id="phase3-problem-context"></div>
+      </div>
+
+      <!-- Sync Simulation -->
+      <div class="phase-grid">
+
+        <!-- LEFT: Controls -->
+        <aside class="control-card hud-card glow-card sidebar-panel">
+
+          <h2><span class="module-tag sync">Simulate</span> Sync Algorithm</h2>
+
+          <label>
+            Algorithm
+            <select id="sync-sim-algo" class="sync-algo-select"></select>
+          </label>
+
+          <p id="sync-algo-desc" class="algo-desc">Select an algorithm to see its description.</p>
+
+          <label>
+            Iterations
+            <input type="number" id="sync-iterations" value="2" min="1" max="5">
+          </label>
+
+          <label>
+            Buffer size
+            <input type="number" id="sync-buffer" value="5" min="2" max="10">
+          </label>
+
+          <label>
+            Semaphore slots
+            <input type="number" id="sync-slots" value="2" min="1" max="5">
+          </label>
+
+          <label class="checkbox-label">
+            <input type="checkbox" id="sync-corrected">
+            Safe race (mutex)
+          </label>
+
+          <div class="btn-row stacked">
+            <button class="btn primary glow-btn" id="btn-sim-run">▶ Simulate</button>
+          </div>
+
+          <div class="playback-panel">
+            <button class="btn icon" id="btn-sim-play"   title="Play"   disabled>▶</button>
+            <button class="btn icon" id="btn-sim-pause"  title="Pause"  disabled>⏸</button>
+            <button class="btn icon" id="btn-sim-step"   title="Step"   disabled>+1</button>
+            <button class="btn icon" id="btn-sim-rewind" title="Rewind" disabled>⏮</button>
+          </div>
+
+          <div class="progress-track" style="margin-top:0.75rem">
+            <div id="sync-progress-bar" class="progress-fill sync"></div>
+          </div>
+          <span id="sync-progress-label" class="progress-label">—</span>
+
+        </aside>
+
+        <!-- RIGHT: Live Visualization -->
+        <div class="viz-column sync-compact">
+
+          <div class="card hud-card glow-card">
+            <div class="card-header">
+              <h3>Live Execution</h3>
+              <span id="tick-display" class="tick-badge">—</span>
+            </div>
+
+            <div class="viz-legend-row">
+              <span><i class="leg cpu"></i>CPU</span>
+              <span><i class="leg cs"></i>Critical Section</span>
+              <span><i class="leg wait"></i>Waiting</span>
+            </div>
+
+            <div class="sync-visual-grid">
+
+              <div class="sync-canvas-wrap">
+                <canvas id="sync-canvas"></canvas>
+              </div>
+
+              <div class="sync-side-panel">
+
+                <h4 class="mini-label">Process states</h4>
+                <div id="process-states" class="process-states"></div>
+
+                <h4 class="mini-label">Locks &amp; shared vars</h4>
+                <div id="resource-bar" class="resource-bar"></div>
+
+                <h4 class="mini-label">Waiting queue</h4>
+                <div id="waiting-queue-viz" class="waiting-queue-viz"></div>
+
+                <h4 class="mini-label">What's happening</h4>
+                <div id="sync-step-explain" class="sync-step-explain">
+                  <p class="explain-placeholder">Run the simulation to begin.</p>
+                </div>
+
+                <h4 class="mini-label" style="margin-top:0.75rem">CS Flow</h4>
+                <div id="sync-flow-diagram"></div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- Run Summary -->
+          <div id="sync-run-summary"></div>
+
+          <!-- Step Timeline -->
+          <div class="card hud-card glow-card sync-timeline-card">
+            <h3>Step Timeline <span class="subtitle">click any step to jump</span></h3>
+            <div id="sync-timeline" class="timeline"></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Technique Comparison -->
+      <div class="card hud-card glow-card" style="margin-top:1.5rem">
+        <h2><span class="module-tag sync">Compare</span> Synchronization Techniques</h2>
+        <p class="hint">
+          All synchronization techniques are evaluated against the <strong>same
+          workload</strong> — showing which problems each prevents, its performance
+          impact, and overhead.
+        </p>
+        <div id="technique-best-banner" class="best-tech-banner"></div>
+        <div class="btn-row">
+          <button class="btn primary glow-btn" id="btn-phase3-compare">
+            Compare All Techniques
+          </button>
+        </div>
+      </div>
+
+      <!-- Prevention Matrix -->
+      <div class="card hud-card glow-card" id="comparison-section" style="display:none">
+        <h3>Problem Prevention Matrix</h3>
+        <p class="metrics-hint">Which technique prevents which detected problem.</p>
+        <div id="prevention-matrix"></div>
+      </div>
+
+      <!-- Performance Comparison -->
+      <div class="card hud-card glow-card" id="performance-section" style="display:none">
+        <h3>Performance Comparison</h3>
+        <div id="technique-table"></div>
+        <div class="chart-row">
+          <div class="chart-box tall"><canvas id="technique-score-chart"></canvas></div>
+          <div class="chart-box tall"><canvas id="technique-cost-chart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Proceed -->
+      <div class="proceed-bar" id="proceed-phase4" style="display:none">
+        <button class="btn primary glow-btn" id="btn-proceed-phase4">
+          Next: Analysis &amp; Report →
+        </button>
+      </div>
+
+    </section>
+
+    <!-- ================================================= -->
+    <!-- PHASE 4 — Analysis & Report                       -->
+    <!--   Scheduling results + detected issues +          -->
+    <!--   sync methods applied + recommendations          -->
+    <!-- ================================================= -->
+    <section id="phase-4" class="mission-phase">
+
+      <div class="card hud-card glow-card report-card" style="max-width:980px;margin:0 auto;">
+
+        <h2><span class="module-tag analysis">P4</span> Analysis &amp; Report</h2>
+
+        <div style="display:flex;align-items:center;gap:1.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+          <div class="score-ring-wrap" style="margin:0">
+            <div class="score-ring" id="score-ring">—</div>
+            <span style="font-size:0.7rem;color:var(--muted)">Best Technique Score / 100</span>
+          </div>
+          <button class="btn primary glow-btn" id="btn-phase4-run">Generate Report</button>
+        </div>
+
+        <!-- Full workflow summary banner -->
+        <div id="workflow-summary"></div>
+
+        <!-- Report sections rendered by DiagnosticsViz.renderReport() -->
+        <div id="report-executive"      class="report-section"></div>
+        <div id="report-before-after"   class="report-section"></div>
+        <div id="report-scheduler"      class="report-section"></div>
+        <div id="report-recommendation" class="report-section"></div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer mission-footer">
+    <span>OS Lab Simulator</span>
+    <span id="footer-status">Ready</span>
+  </footer>
+
+  <!-- ===== SCRIPTS ===== -->
+  <script src="{{ url_for('static', filename='js/playback.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/nasa-viz.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sync-insights.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sync-viz.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/scheduler-viz.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/phase1-tutor.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/diagnostics-viz.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/report-viz.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+</body>
+</html>
