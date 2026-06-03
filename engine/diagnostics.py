@@ -36,15 +36,17 @@ from .scheduler import CPUScheduler
 # ─────────────────────────────────────────────────────────────────────────────
 
 PROBLEM_META: dict[str, dict[str, str]] = {
-    "race_condition":      {"name": "Race Condition",          "category": "schedule"},
-    "cs_violation":        {"name": "Critical Section Violation", "category": "schedule"},
-    "deadlock":            {"name": "Deadlock",                "category": "schedule"},
-    "starvation":          {"name": "Starvation",             "category": "schedule"},
-    "livelock":            {"name": "Livelock",               "category": "classic"},
-    "producer_consumer":   {"name": "Producer–Consumer",      "category": "classic"},
-    "readers_writers":     {"name": "Readers–Writers Conflict", "category": "classic"},
-    "dining_philosophers": {"name": "Dining Philosophers",    "category": "classic"},
-    "sleeping_barber":     {"name": "Sleeping Barber",        "category": "classic"},
+    # Synchronization problems — directly caused by missing synchronization
+    "race_condition":      {"name": "Race Condition",             "category": "sync"},
+    "cs_violation":        {"name": "Critical Section Violation", "category": "sync"},
+    "livelock":            {"name": "Livelock",                   "category": "sync"},
+    "producer_consumer":   {"name": "Producer–Consumer",          "category": "sync"},
+    "readers_writers":     {"name": "Readers–Writers Conflict",   "category": "sync"},
+    "dining_philosophers": {"name": "Dining Philosophers",        "category": "sync"},
+    "sleeping_barber":     {"name": "Sleeping Barber",            "category": "sync"},
+    # Scheduling problems — caused by CPU scheduling policy, separate from sync
+    "deadlock":            {"name": "Deadlock",                   "category": "scheduling"},
+    "starvation":          {"name": "Starvation",                 "category": "scheduling"},
 }
 
 
@@ -223,7 +225,11 @@ class DiagnosticsEngine:
         problems.append(self._detect_race_and_cs(cpu_trace, norm))     # 2 entries
         problems.append(self._detect_deadlock(cpu_trace, norm, preemptive))
         problems.append(self._detect_starvation(sched, norm))
-        problems.extend(self._classic_problems())
+        problems.append(self._detect_livelock(cpu_trace, norm, preemptive))
+        problems.append(self._detect_producer_consumer(cpu_trace, norm))
+        problems.append(self._detect_readers_writers(cpu_trace, norm))
+        problems.append(self._detect_dining_philosophers(cpu_trace, norm))
+        problems.append(self._detect_sleeping_barber(cpu_trace, norm, preemptive))
         # flatten (race_and_cs returns a list)
         flat: list[dict] = []
         for p in problems:
@@ -376,7 +382,7 @@ class DiagnosticsEngine:
         race = {
             "id": "race_condition",
             "name": PROBLEM_META["race_condition"]["name"],
-            "category": "schedule",
+            "category": "sync",
             "occurred": race_occurred,
             "severity": "high" if lost_updates > 1 else ("medium" if race_occurred else "none"),
             "metrics": {
@@ -396,7 +402,7 @@ class DiagnosticsEngine:
         cs = {
             "id": "cs_violation",
             "name": PROBLEM_META["cs_violation"]["name"],
-            "category": "schedule",
+            "category": "sync",
             "occurred": cs_occurred,
             "severity": "high" if overlaps > 1 else ("medium" if cs_occurred else "none"),
             "metrics": {
@@ -477,7 +483,7 @@ class DiagnosticsEngine:
         return {
             "id": "deadlock",
             "name": PROBLEM_META["deadlock"]["name"],
-            "category": "schedule",
+            "category": "scheduling",
             "occurred": deadlock,
             "severity": "high" if deadlock else "none",
             "metrics": {
@@ -514,7 +520,7 @@ class DiagnosticsEngine:
         return {
             "id": "starvation",
             "name": PROBLEM_META["starvation"]["name"],
-            "category": "schedule",
+            "category": "scheduling",
             "occurred": occurred,
             "severity": "high" if occurred and max_wait > 3 * avg else ("medium" if occurred else "none"),
             "metrics": {
@@ -532,78 +538,455 @@ class DiagnosticsEngine:
             ),
         }
 
-    # ── classic concurrency scenarios (canonical demonstrations) ─────────────
-    def _classic_problems(self) -> list[dict]:
-        return [
-            {
-                "id": "livelock", "name": PROBLEM_META["livelock"]["name"], "category": "classic",
-                "occurred": True, "severity": "medium",
-                "metrics": {"Retries": 8, "Progress": 0},
-                "events": [
-                    "Both threads detect a conflict and back off simultaneously",
-                    "Both retry at the same time — conflict again",
-                    "Processes keep changing state but neither makes progress",
-                ],
-                "explanation": "Livelock: processes continuously respond to each other "
-                               "by backing off and retrying. They are not blocked (unlike "
-                               "deadlock) but make no progress — active yet stuck.",
+    # ── classic concurrency problems — computed from real trace ─────────────
+
+    def _detect_livelock(
+        self, trace: list[str | None], procs: list[dict], preemptive: bool
+    ) -> dict:
+        """
+        Livelock: processes repeatedly swap CPU while both have open CS windows,
+        each preempting the other without either finishing its critical section.
+        Requires preemptive scheduling to manifest.
+        """
+        if not preemptive or len(procs) < 2:
+            return self._no_problem(
+                "livelock",
+                "Livelock requires preemptive scheduling with concurrent CS access — "
+                "not exposed under this non-preemptive schedule.",
+            )
+
+        first_tick: dict[str, int] = {}
+        last_tick:  dict[str, int] = {}
+        for t, pid in enumerate(trace):
+            if pid is None:
+                continue
+            first_tick.setdefault(pid, t)
+            last_tick[pid] = t
+
+        alternations = 0
+        events: list[str] = []
+        prev: str | None = None
+
+        for t, pid in enumerate(trace):
+            if pid is None:
+                prev = None
+                continue
+            in_cs = first_tick.get(pid, -1) <= t <= last_tick.get(pid, -1)
+            if not in_cs:
+                prev = None
+                continue
+            if prev is not None and prev != pid:
+                prev_in_cs = first_tick.get(prev, -1) <= t <= last_tick.get(prev, -1)
+                if prev_in_cs:
+                    alternations += 1
+                    if len(events) < 5:
+                        events.append(
+                            f"t={t}: CPU switched {prev} → {pid} — "
+                            f"both in CS window, neither has finished"
+                        )
+            prev = pid
+
+        # Livelock requires a sustained cycle of mutual interference:
+        # count how many distinct pairs alternate ≥3 times each.
+        # A single pair alternating once or twice is normal preemption, not livelock.
+        pair_counts: dict[tuple[str, str], int] = {}
+        prev2: str | None = None
+        for t, pid in enumerate(trace):
+            if pid is None:
+                prev2 = None
+                continue
+            in_cs = first_tick.get(pid, -1) <= t <= last_tick.get(pid, -1)
+            if not in_cs:
+                prev2 = None
+                continue
+            if prev2 is not None and prev2 != pid:
+                prev_in_cs = first_tick.get(prev2, -1) <= t <= last_tick.get(prev2, -1)
+                if prev_in_cs:
+                    key = (min(prev2, pid), max(prev2, pid))
+                    pair_counts[key] = pair_counts.get(key, 0) + 1
+            prev2 = pid
+
+        livelock_pairs = {pair: cnt for pair, cnt in pair_counts.items() if cnt >= 3}
+        occurred = len(livelock_pairs) > 0
+
+        events = []
+        for (pa, pb), cnt in list(livelock_pairs.items())[:3]:
+            events.append(
+                f"{pa} ↔ {pb} alternated {cnt} time(s) inside overlapping CS windows — "
+                f"each preemption leaves the other's CS still open; no progress"
+            )
+
+        return {
+            "id": "livelock",
+            "name": PROBLEM_META["livelock"]["name"],
+            "category": "sync",
+            "occurred": occurred,
+            "severity": "medium" if occurred else "none",
+            "metrics": {
+                "Alternating pairs": len(livelock_pairs),
+                "Max alternations": max(pair_counts.values(), default=0),
+                "Progress": 0 if occurred else 1,
             },
-            {
-                "id": "producer_consumer", "name": PROBLEM_META["producer_consumer"]["name"], "category": "classic",
-                "occurred": True, "severity": "high",
-                "metrics": {"Buffer size": 5, "Overflow": 2, "Underflow": 1},
-                "events": [
-                    "Producer writes to a full buffer — item overwritten (overflow)",
-                    "Consumer reads from an empty buffer — invalid data (underflow)",
-                    "No semaphore counting empty/full slots to gate access",
-                ],
-                "explanation": "Producer-Consumer problem: a producer adds data to a "
-                               "bounded buffer and a consumer removes it. Without counting "
-                               "semaphores for empty and full slots, overflow and underflow "
-                               "occur, corrupting shared data.",
+            "events": events,
+            "explanation": (
+                f"{len(livelock_pairs)} process pair(s) alternated inside overlapping CS "
+                f"windows 3+ times — each preemption hands control to the other process "
+                f"while both CS windows are still open. Neither makes progress: livelock."
+                if occurred else
+                "No sustained mutual interference detected. Processes completed their "
+                "CS windows without repeatedly yielding to each other."
+            ),
+        }
+
+    def _detect_producer_consumer(
+        self, trace: list[str | None], procs: list[dict]
+    ) -> dict:
+        """
+        Split processes into producers (first half) and consumers (second half).
+        Each CPU tick a producer increments the buffer; each tick a consumer
+        decrements it. Without sync: no bounds checking → overflow / underflow.
+        """
+        n = len(procs)
+        if n < 2:
+            return self._no_problem(
+                "producer_consumer",
+                "Need at least 2 processes (producers + consumers).",
+            )
+
+        mid       = (n + 1) // 2
+        producers = {p["pid"] for p in procs[:mid]}
+        consumers = {p["pid"] for p in procs[mid:]}
+
+        if not consumers:
+            return self._no_problem(
+                "producer_consumer", "No consumer processes in this workload."
+            )
+
+        BUFFER_MAX = max(3, n - 1)
+        buffer     = 0
+        overflows  = 0
+        underflows = 0
+        events: list[str] = []
+
+        for t, pid in enumerate(trace):
+            if pid is None:
+                continue
+            if pid in producers:
+                buffer += 1
+                if buffer > BUFFER_MAX:
+                    overflows += 1
+                    if len(events) < 6:
+                        events.append(
+                            f"t={t}: {pid} (producer) wrote to full buffer "
+                            f"({buffer}/{BUFFER_MAX}) — overflow, item overwritten"
+                        )
+            elif pid in consumers:
+                buffer -= 1
+                if buffer < 0:
+                    underflows += 1
+                    if len(events) < 6:
+                        events.append(
+                            f"t={t}: {pid} (consumer) read from empty buffer "
+                            f"({buffer}) — underflow, invalid data consumed"
+                        )
+
+        occurred = overflows > 0 or underflows > 0
+        return {
+            "id": "producer_consumer",
+            "name": PROBLEM_META["producer_consumer"]["name"],
+            "category": "sync",
+            "occurred": occurred,
+            "severity": (
+                "high"   if (overflows + underflows) > 2 else
+                "medium" if occurred else
+                "none"
+            ),
+            "metrics": {
+                "Buffer capacity": BUFFER_MAX,
+                "Overflow events": overflows,
+                "Underflow events": underflows,
+                "Final buffer level": max(0, buffer),
             },
-            {
-                "id": "readers_writers", "name": PROBLEM_META["readers_writers"]["name"], "category": "classic",
-                "occurred": True, "severity": "high",
-                "metrics": {"Readers": 3, "Writers": 2, "Conflicts": 3},
-                "events": [
-                    "Writer modifies shared data while readers are still reading",
-                    "Readers observe a partially-written, inconsistent value",
-                    "No write-lock to exclude readers during a write",
-                ],
-                "explanation": "Readers-Writers problem: multiple readers may read "
-                               "concurrently, but a writer needs exclusive access. Without "
-                               "synchronization a writer can corrupt data that readers are "
-                               "actively reading.",
+            "events": events,
+            "explanation": (
+                f"Buffer overflowed {overflows} time(s) and underflowed {underflows} "
+                f"time(s). Producers and consumers ran concurrently without checking "
+                f"buffer bounds — counting semaphores for empty/full slots would "
+                f"prevent this."
+                if occurred else
+                f"The execution order kept the buffer within bounds (0–{BUFFER_MAX}). "
+                f"Without counting semaphores this is not guaranteed for all schedules."
+            ),
+        }
+
+    def _detect_readers_writers(
+        self, trace: list[str | None], procs: list[dict]
+    ) -> dict:
+        """
+        Even-indexed processes are readers, odd-indexed are writers.
+        A conflict occurs when a writer runs while any reader has an open read
+        window (first_tick..last_tick), meaning the writer corrupts data being read.
+        """
+        n = len(procs)
+        if n < 2:
+            return self._no_problem(
+                "readers_writers", "Need at least 2 processes."
+            )
+
+        writers = {p["pid"] for i, p in enumerate(procs) if i % 2 != 0}
+        readers = {p["pid"] for i, p in enumerate(procs) if i % 2 == 0}
+
+        if not writers:
+            return self._no_problem("readers_writers", "No writer processes.")
+
+        first_tick: dict[str, int] = {}
+        last_tick:  dict[str, int] = {}
+        for t, pid in enumerate(trace):
+            if pid is None:
+                continue
+            first_tick.setdefault(pid, t)
+            last_tick[pid] = t
+
+        conflicts = 0
+        events: list[str] = []
+
+        for t, pid in enumerate(trace):
+            if pid not in writers:
+                continue
+            active_readers = [
+                r for r in readers
+                if r in first_tick
+                and first_tick[r] <= t <= last_tick.get(r, first_tick[r])
+            ]
+            if active_readers:
+                conflicts += 1
+                if len(events) < 6:
+                    events.append(
+                        f"t={t}: {pid} (writer) modified shared data while "
+                        f"{active_readers[0]} (reader) was active — inconsistent read"
+                    )
+
+        occurred = conflicts > 0
+        return {
+            "id": "readers_writers",
+            "name": PROBLEM_META["readers_writers"]["name"],
+            "category": "sync",
+            "occurred": occurred,
+            "severity": "high" if conflicts > 2 else ("medium" if occurred else "none"),
+            "metrics": {
+                "Readers": len(readers),
+                "Writers": len(writers),
+                "Write–read conflicts": conflicts,
             },
-            {
-                "id": "dining_philosophers", "name": PROBLEM_META["dining_philosophers"]["name"], "category": "classic",
-                "occurred": True, "severity": "high",
-                "metrics": {"Philosophers": 5, "Forks held": 5, "Eating": 0},
-                "events": [
-                    "All 5 philosophers pick up their left fork simultaneously",
-                    "Each waits for the right fork — held by their neighbour",
-                    "Circular wait around the table — deadlock, no one eats",
-                ],
-                "explanation": "Dining Philosophers: each philosopher holds one fork and "
-                               "waits for the other. This creates a circular wait — a "
-                               "classic deadlock scenario where no process can proceed.",
+            "events": events,
+            "explanation": (
+                f"A writer ran {conflicts} time(s) while readers were still active — "
+                f"readers observed a partially-written, inconsistent value. A "
+                f"reader-writer lock grants writers exclusive access."
+                if occurred else
+                f"Writers ran only when no readers were active under this schedule. "
+                f"Without a reader-writer lock this ordering is not guaranteed."
+            ),
+        }
+
+    def _detect_dining_philosophers(
+        self, trace: list[str | None], procs: list[dict]
+    ) -> dict:
+        """
+        Treat up to 5 processes as philosophers around a table.
+        Each needs fork[i] (left) then fork[(i+1)%n] (right).
+        Simulate fork acquisition based on execution order; detect circular wait.
+        """
+        n = min(len(procs), 5)
+        if n < 2:
+            return self._no_problem(
+                "dining_philosophers", "Need at least 2 processes."
+            )
+
+        philosophers = [p["pid"] for p in procs[:n]]
+        ph_idx       = {pid: i for i, pid in enumerate(philosophers)}
+        forks        = [None] * n
+        holding: dict[str, list[int]] = {pid: [] for pid in philosophers}
+        blocked: dict[str, bool]       = {pid: False for pid in philosophers}
+        events: list[str] = []
+        deadlock = False
+
+        for t, pid in enumerate(trace):
+            if pid not in ph_idx or blocked[pid]:
+                continue
+
+            i     = ph_idx[pid]
+            left  = i
+            right = (i + 1) % n
+
+            # Acquire left fork if free
+            if left not in holding[pid] and forks[left] is None:
+                forks[left] = pid
+                holding[pid].append(left)
+                if len(events) < 8:
+                    events.append(f"t={t}: {pid} picked up fork {left} (left)")
+
+            # Acquire right fork if we already have left
+            if left in holding[pid] and right not in holding[pid]:
+                if forks[right] is None:
+                    forks[right] = pid
+                    holding[pid].append(right)
+                    if len(events) < 8:
+                        events.append(
+                            f"t={t}: {pid} picked up fork {right} (right) — eats"
+                        )
+                    for f in list(holding[pid]):
+                        forks[f] = None
+                    holding[pid] = []
+                else:
+                    blocked[pid] = True
+                    if len(events) < 8:
+                        events.append(
+                            f"t={t}: {pid} blocked — fork {right} held by {forks[right]}"
+                        )
+
+            # Deadlock: every philosopher holds exactly one fork and is blocked
+            all_hold_one = all(len(holding.get(p, [])) == 1 for p in philosophers)
+            all_blocked  = all(blocked.get(p, False) or len(holding.get(p, [])) > 0
+                               for p in philosophers)
+            if all_hold_one and not deadlock:
+                deadlock = True
+                if len(events) < 8:
+                    events.append(
+                        f"t={t}: every philosopher holds one fork and waits — "
+                        f"circular wait → DEADLOCK"
+                    )
+                break
+
+        blocked_count = sum(1 for pid in philosophers if blocked[pid])
+        # Only flag occurred on actual blocking — holding a fork while eating is normal
+        occurred = deadlock or blocked_count > 0
+
+        return {
+            "id": "dining_philosophers",
+            "name": PROBLEM_META["dining_philosophers"]["name"],
+            "category": "sync",
+            "occurred": occurred,
+            "severity": "high" if deadlock else ("medium" if occurred else "none"),
+            "metrics": {
+                "Philosophers": n,
+                "Blocked": blocked_count,
+                "Deadlock": "yes" if deadlock else "no",
             },
-            {
-                "id": "sleeping_barber", "name": PROBLEM_META["sleeping_barber"]["name"], "category": "classic",
-                "occurred": True, "severity": "medium",
-                "metrics": {"Chairs": 3, "Customers lost": 4, "Missed wakeups": 2},
-                "events": [
-                    "Customer arrives while barber is asleep — no signal sent",
-                    "Barber misses the customer; customer leaves (lost wakeup)",
-                    "Race on chair count: customer sees full chairs due to bad timing",
-                ],
-                "explanation": "Sleeping Barber: the barber sleeps when there are no "
-                               "customers; customers wake the barber or wait in chairs. "
-                               "Without proper signalling, wakeups are lost and customers "
-                               "are dropped.",
+            "events": events,
+            "explanation": (
+                f"Deadlock: all {n} philosophers hold one fork each and wait for "
+                f"the other — circular wait, no one can eat."
+                if deadlock else
+                f"{blocked_count} philosopher(s) blocked waiting for the second fork. "
+                f"Resource ordering or a monitor would break the circular dependency."
+                if occurred else
+                "Philosophers acquired and released forks without circular wait — "
+                "no deadlock under this execution order."
+            ),
+        }
+
+    def _detect_sleeping_barber(
+        self, trace: list[str | None], procs: list[dict], preemptive: bool
+    ) -> dict:
+        """
+        First process = barber, remaining = customers.
+        Customers arrive at their arrival times.
+        Without sync: race on the sleeping/waking state causes missed wakeups;
+        chair count has no atomic protection so customers can be lost.
+        """
+        if len(procs) < 2:
+            return self._no_problem(
+                "sleeping_barber", "Need at least 2 processes."
+            )
+
+        barber    = procs[0]["pid"]
+        customers = procs[1:]
+        chairs    = max(2, len(customers) - 1)
+
+        waiting: list[str] = []
+        served:  list[str] = []
+        lost:    list[str] = []
+        # Track which customers arrived while barber was sleeping.
+        # A missed wakeup is confirmed if the barber later starts running
+        # without those customers being at the head of the queue
+        # (i.e. the barber "woke" from something else, not their signal).
+        arrived_while_asleep: list[str] = []
+        missed_wakeups = 0
+        barber_sleeping = True
+        arrived: set[str] = set()
+        events: list[str] = []
+
+        for t, pid in enumerate(trace):
+            # Process customer arrivals at this tick
+            for cust in customers:
+                if cust["arrival"] == t and cust["pid"] not in arrived:
+                    arrived.add(cust["pid"])
+                    if len(waiting) < chairs:
+                        waiting.append(cust["pid"])
+                        if barber_sleeping:
+                            arrived_while_asleep.append(cust["pid"])
+                            if len(events) < 6:
+                                events.append(
+                                    f"t={t}: {cust['pid']} arrived — barber sleeping, "
+                                    f"no atomic wakeup signal (potential missed wakeup)"
+                                )
+                    else:
+                        lost.append(cust["pid"])
+                        if len(events) < 6:
+                            events.append(
+                                f"t={t}: {cust['pid']} arrived, all {chairs} chairs full — "
+                                f"customer leaves without service"
+                            )
+
+            if pid is None:
+                continue
+
+            if pid == barber:
+                if barber_sleeping:
+                    # Barber just woke — if it woke but queue is empty (customer signal
+                    # was lost) that is a confirmed missed wakeup
+                    if not waiting and arrived_while_asleep:
+                        missed_wakeups += len(arrived_while_asleep)
+                        if len(events) < 6:
+                            events.append(
+                                f"t={t}: barber woke but waiting queue is empty — "
+                                f"{len(arrived_while_asleep)} wakeup(s) lost"
+                            )
+                    arrived_while_asleep = []
+                    barber_sleeping = False
+                if waiting:
+                    customer = waiting.pop(0)
+                    served.append(customer)
+                    if len(events) < 6:
+                        events.append(f"t={t}: barber serves {customer}")
+                else:
+                    barber_sleeping = True
+
+        occurred = len(lost) > 0 or missed_wakeups > 0
+        return {
+            "id": "sleeping_barber",
+            "name": PROBLEM_META["sleeping_barber"]["name"],
+            "category": "sync",
+            "occurred": occurred,
+            "severity": "medium" if occurred else "none",
+            "metrics": {
+                "Chairs": chairs,
+                "Customers served": len(served),
+                "Customers lost": len(lost),
+                "Missed wakeups": missed_wakeups,
             },
-        ]
+            "events": events,
+            "explanation": (
+                f"{len(lost)} customer(s) turned away (waiting room full) and "
+                f"{missed_wakeups} potential missed wakeup(s). Without atomic signaling "
+                f"a customer can arrive while the barber checks for work — the wakeup "
+                f"is lost and the customer waits forever."
+                if occurred else
+                "All customers were served and wakeups were not lost under this schedule. "
+                "Semaphore-based signaling is still required to guarantee correctness."
+            ),
+        }
 
     def _no_problem(self, pid: str, why: str) -> dict:
         return {

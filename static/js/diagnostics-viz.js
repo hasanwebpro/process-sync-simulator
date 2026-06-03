@@ -18,60 +18,60 @@ const DiagnosticsViz = {
     sleeping_barber: "Barber",
   },
 
+  SHORT_WHY: {
+    race_condition:      "Concurrent read-modify-write — one process overwrites another's result.",
+    cs_violation:        "Two processes inside the critical section simultaneously.",
+    deadlock:            "Circular wait — each process holds what the other needs.",
+    starvation:          "One process waits far longer; scheduler keeps skipping it.",
+    livelock:            "Processes respond to each other endlessly but make no progress.",
+    producer_consumer:   "Buffer overflow/underflow — no semaphore guards empty/full slots.",
+    readers_writers:     "Writer modifies data while readers are actively reading it.",
+    dining_philosophers: "All grab one fork, all wait for the other — circular deadlock.",
+    sleeping_barber:     "Wakeup signals lost — barber sleeps while a customer is waiting.",
+  },
+
   /* ════════════════════════════════════════════════════════════════════
-     PHASE 1 — Problem detection grid (Yes/No + metrics + events)
+     PHASE 2 — Animated detection table (✓ / ✗ + one-line why)
      ════════════════════════════════════════════════════════════════════ */
-  renderDetection(diag) {
+  async renderDetection(diag) {
     const el = document.getElementById("detection-grid");
     if (!el) return;
-    const problems = diag.problems || [];
-    const occurred = problems.filter((p) => p.occurred).length;
-    const algo = (diag.scheduler?.algorithm || "").toUpperCase().replace(/_/g, " ");
+
+    const problems  = diag.problems || [];
+    const syncProbs = problems.filter(p => p.category === "sync");
+    const nOcc      = syncProbs.filter(p => p.occurred).length;
+    const algo      = (diag.scheduler?.algorithm || "").toUpperCase().replace(/_/g, " ");
 
     const summary = document.getElementById("detection-summary");
-    if (summary) {
-      const preemptive = diag.scheduler?.preemptive;
-      summary.innerHTML =
-        `<strong>${occurred}</strong> of ${problems.length} synchronization ` +
-        `problems are exposed when this workload runs under ` +
-        `<strong>${algo}</strong> without synchronization. ` +
-        (preemptive
-          ? "Preemptive scheduling creates more interleaving, surfacing more problems."
-          : "Non-preemptive scheduling reduces interleaving, so fewer problems surface."
-        );
-    }
+    if (summary) summary.textContent = `${nOcc} / ${syncProbs.length} sync problems detected · ${algo}`;
 
-    el.innerHTML = problems
-      .map((p) => {
-        const yes = p.occurred;
-        const metricChips = Object.entries(p.metrics || {})
-          .map(
-            ([k, v]) =>
-              `<span class="dx-metric"><span class="dx-mk">${k}</span><span class="dx-mv">${v}</span></span>`
-          )
-          .join("");
-        const events = (p.events || [])
-          .map((e) => `<li>${e}</li>`)
-          .join("");
-        return `
-          <div class="dx-card ${yes ? "dx-yes" : "dx-no"}">
-            <div class="dx-card-head">
-              <span class="dx-name">${p.name}</span>
-              <span class="dx-flag ${yes ? "flag-yes" : "flag-no"}">${yes ? "YES" : "NO"}</span>
-            </div>
-            <div class="dx-cat">${p.category === "schedule" ? "schedule-driven" : "classic problem"}${
-              yes ? ` · ${p.severity}` : ""
-            }</div>
-            <p class="dx-explain">${p.explanation || ""}</p>
-            ${metricChips ? `<div class="dx-metrics">${metricChips}</div>` : ""}
-            ${
-              events
-                ? `<details class="dx-events"><summary>Key events</summary><ul>${events}</ul></details>`
-                : ""
-            }
-          </div>`;
-      })
-      .join("");
+    const delay = Math.max(180, Playback.getStepDelay(Playback.getSpeedSlider()) / 5);
+
+    el.innerHTML = `
+      <table class="dx-table">
+        <thead>
+          <tr>
+            <th class="dx-th-name">Synchronization Problem</th>
+            <th class="dx-th-status">Status</th>
+            <th class="dx-th-why">Why</th>
+          </tr>
+        </thead>
+        <tbody id="dx-tbody-sync"></tbody>
+      </table>`;
+
+    const syncTbody = document.getElementById("dx-tbody-sync");
+
+    for (const p of syncProbs) {
+      await Playback.sleep(delay);
+      const why = this.SHORT_WHY[p.id] || (p.explanation || "").slice(0, 90);
+      const tr = document.createElement("tr");
+      tr.className = `dx-row ${p.occurred ? "dx-row-bad" : "dx-row-ok"} row-appear`;
+      tr.innerHTML = `
+        <td class="dx-prob-name">${p.name}</td>
+        <td class="dx-status-cell"><span class="${p.occurred ? "dx-cross" : "dx-tick"}">${p.occurred ? "✗" : "✓"}</span></td>
+        <td class="dx-why-cell">${why}</td>`;
+      syncTbody.appendChild(tr);
+    }
   },
 
   /* ════════════════════════════════════════════════════════════════════
@@ -152,36 +152,69 @@ const DiagnosticsViz = {
   _renderTechniqueTable(techniques, nOccurred) {
     const el = document.getElementById("technique-table");
     if (!el) return;
+
+    // Detect whether we have real simulation metrics (from pipeline) or analytical
+    const hasSimMetrics = techniques.some(t => t.sim_metrics);
+
     const rows = techniques
       .map((t, i) => {
-        const m = t.metrics;
+        const prevented = (t.prevented || []).length;
+        if (hasSimMetrics) {
+          const s = t.sim_metrics || {};
+          return `<tr class="${i === 0 ? "row-best" : ""}">
+            <td class="tech-name">${t.name}${i === 0 ? " ★" : ""}</td>
+            <td>${prevented}/${nOccurred}</td>
+            <td>${s.cs_entries ?? "—"}</td>
+            <td>${s.wait_events ?? "—"}</td>
+            <td>${s.busy_wait_steps ?? "—"}</td>
+            <td>${s.mutual_exclusion ? "✓" : "✗"}</td>
+            <td>${s.deadlock_free ? "✓" : "✗"}</td>
+            <td>${s.total_steps ?? "—"}</td>
+            <td><span class="score-badge">${t.score}</span></td>
+          </tr>`;
+        }
+        const m = t.metrics || {};
         return `<tr class="${i === 0 ? "row-best" : ""}">
           <td class="tech-name">${t.name}${i === 0 ? " ★" : ""}</td>
-          <td>${t.prevented.length}/${nOccurred}</td>
-          <td>${m.throughput}</td>
-          <td>${m.avg_waiting}</td>
-          <td>${m.avg_response}</td>
-          <td>${m.avg_turnaround}</td>
-          <td>${m.cpu_util}%</td>
-          <td>${m.fairness}</td>
-          <td>${m.overhead}</td>
+          <td>${prevented}/${nOccurred}</td>
+          <td>${m.throughput ?? "—"}</td>
+          <td>${m.avg_waiting ?? "—"}</td>
+          <td>${m.avg_response ?? "—"}</td>
+          <td>${m.cpu_util ?? "—"}%</td>
+          <td>${m.overhead ?? "—"}</td>
           <td><span class="score-badge">${t.score}</span></td>
         </tr>`;
       })
       .join("");
-    el.innerHTML = `
-      <div class="table-scroll">
-        <table class="metrics-table">
-          <thead>
-            <tr>
-              <th>Technique</th><th>Prevents</th><th>Throughput</th>
-              <th>Avg WT</th><th>Avg RT</th><th>Avg TAT</th>
-              <th>CPU %</th><th>Fairness</th><th>Overhead</th><th>Score</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+
+    if (hasSimMetrics) {
+      el.innerHTML = `
+        <div class="table-scroll">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>Technique</th><th>Prevents</th><th>CS Entries</th>
+                <th>Wait Events</th><th>Busy-Wait</th>
+                <th>Mutual Excl.</th><th>Deadlock Free</th><th>Total Steps</th><th>Score</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="table-scroll">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th>Technique</th><th>Prevents</th><th>Throughput</th>
+                <th>Avg WT</th><th>Avg RT</th><th>CPU %</th><th>Overhead</th><th>Score</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
   },
 
   _renderScoreChart(techniques) {
@@ -394,6 +427,9 @@ const DiagnosticsViz = {
       const el = document.getElementById(id);
       if (el) el.innerHTML = "";
     });
+    Phase2Viz.clear();
+    const detSum = document.getElementById("detection-summary");
+    if (detSum) detSum.textContent = "—";
     Object.values(this.charts).forEach((c) => c && c.destroy());
     this.charts = {};
   },

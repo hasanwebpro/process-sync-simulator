@@ -333,56 +333,115 @@ function renderPhase3ProblemContext() {
 //  Phase 1 helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function renderPhase1Insights(data) {
-  const s = data.scheduling;
-  const a = s.averages || {};
-  renderInsights("phase1-insights", [
-    { k: "Primary scheduler", v: formatAlgoName(data.primary_algorithm) },
-    { k: "CPU order",         v: (data.execution_order || []).join(" → ") },
-    { k: "Context switches",  v: data.context_switches ?? "—" },
-    { k: "Avg CT",       v: a.avg_completion },
-    { k: "Avg TAT",      v: a.avg_turnaround },
-    { k: "Avg WT",       v: a.avg_waiting },
-    { k: "Avg RT",       v: a.avg_response },
-    { k: "Throughput",   v: a.throughput },
-  ]);
+function buildGanttBlocks(comparisons, primaryAlgo) {
+  const container = document.getElementById("gantt-charts-container");
+  container.innerHTML = "";
+
+  const blocks = {};
+  Object.entries(comparisons).forEach(([id, r]) => {
+    const safeId = id.replace(/[^a-z0-9_]/gi, "_");
+
+    const seen = [];
+    (r.gantt || []).forEach((s) => {
+      if (s.pid !== "IDLE" && !seen.includes(s.pid)) seen.push(s.pid);
+    });
+    const order = seen.join(" → ") || "—";
+
+    const block = document.createElement("div");
+    block.className = "gantt-algo-block";
+    block.innerHTML = `
+      <div class="gantt-algo-header">
+        <span class="gantt-algo-label">${formatAlgoName(id)}</span>
+        ${id === primaryAlgo ? '<span class="badge">Primary</span>' : ""}
+        <span class="gantt-algo-order">${order}</span>
+      </div>
+      <div class="progress-track">
+        <div id="gp-bar-${safeId}" class="progress-fill"></div>
+      </div>
+      <span id="gp-label-${safeId}" class="progress-label">Waiting…</span>
+      <div class="gantt-wrap"><canvas id="gc-${safeId}"></canvas></div>
+      <div id="gl-${safeId}" class="gantt-legend"></div>
+    `;
+    container.appendChild(block);
+
+    const canvas        = document.getElementById(`gc-${safeId}`);
+    const legendEl      = document.getElementById(`gl-${safeId}`);
+    const progressBar   = document.getElementById(`gp-bar-${safeId}`);
+    const progressLabel = document.getElementById(`gp-label-${safeId}`);
+
+    SchedulerViz.registerCanvas(id, canvas, legendEl);
+
+    blocks[id] = { gantt: r.gantt || [], canvas, legendEl, progressBar, progressLabel, label: formatAlgoName(id) };
+  });
+
+  return blocks;
 }
 
-function renderAllAlgoTables(comparisons) {
+function renderPhase1Insights(data) {
+  const items = Object.entries(data.comparisons || {}).map(([id, r]) => {
+    const seen = [];
+    (r.gantt || []).forEach(s => {
+      if (s.pid !== "IDLE" && !seen.includes(s.pid)) seen.push(s.pid);
+    });
+    return { k: formatAlgoName(id) + " order", v: seen.join(" → ") || "—" };
+  });
+  renderInsights("phase1-insights", items);
+}
+
+async function renderAllAlgoTables(comparisons) {
   const wrap = document.getElementById("sched-all-algo-tables");
   if (!wrap) return;
-  wrap.innerHTML = Object.entries(comparisons).map(([id, r]) => {
-    const a    = r.averages || {};
-    const rows = (r.metrics || []).map(m => `
-      <tr>
-        <td><strong>${m.pid}</strong></td>
-        <td>${m.arrival}</td><td>${m.burst}</td>
-        <td>${m.completion}</td><td>${m.turnaround}</td>
-        <td>${m.waiting}</td><td>${m.response}</td>
-      </tr>`).join("");
+
+  // Build skeletons with empty bodies first
+  wrap.innerHTML = Object.entries(comparisons).map(([id]) => {
+    const safeId = id.replace(/[^a-z0-9_]/gi, "_");
     return `
       <div class="card hud-card glow-card algo-table-card">
         <div class="card-header">
           <h3>${formatAlgoName(id)}</h3>
-          <span class="badge">AWT ${a.avg_waiting} · ATAT ${a.avg_turnaround}</span>
+          <span class="badge" id="atbadge-${safeId}">calculating…</span>
         </div>
         <div class="table-scroll">
           <table class="metrics-table">
             <thead>
               <tr><th>PID</th><th>AT</th><th>BT</th><th>CT</th><th>TAT</th><th>WT</th><th>RT</th></tr>
             </thead>
-            <tbody>${rows}</tbody>
-            <tfoot>
-              <tr>
-                <td colspan="3">Averages</td>
-                <td>${a.avg_completion}</td><td>${a.avg_turnaround}</td>
-                <td>${a.avg_waiting}</td><td>${a.avg_response}</td>
-              </tr>
-            </tfoot>
+            <tbody id="attbody-${safeId}"></tbody>
+            <tfoot id="attfoot-${safeId}"></tfoot>
           </table>
         </div>
       </div>`;
   }).join("");
+
+  const rowDelay = Math.max(220, Playback.getStepDelay(Playback.getSpeedSlider()) / 4);
+
+  for (const [id, r] of Object.entries(comparisons)) {
+    const safeId = id.replace(/[^a-z0-9_]/gi, "_");
+    const tbody  = document.getElementById(`attbody-${safeId}`);
+    const tfoot  = document.getElementById(`attfoot-${safeId}`);
+    const badge  = document.getElementById(`atbadge-${safeId}`);
+    const a      = r.averages || {};
+
+    for (const m of (r.metrics || [])) {
+      await Playback.sleep(rowDelay);
+      const tr = document.createElement("tr");
+      tr.className = "row-appear";
+      tr.innerHTML = `
+        <td><strong>${m.pid}</strong></td>
+        <td>${m.arrival}</td><td>${m.burst}</td>
+        <td>${m.completion}</td><td>${m.turnaround}</td>
+        <td>${m.waiting}</td><td>${m.response}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    await Playback.sleep(rowDelay);
+    tfoot.innerHTML = `<tr class="row-appear">
+      <td colspan="3">Averages</td>
+      <td>${a.avg_completion}</td><td>${a.avg_turnaround}</td>
+      <td>${a.avg_waiting}</td><td>${a.avg_response}</td>
+    </tr>`;
+    if (badge) badge.textContent = `AWT ${a.avg_waiting} · ATAT ${a.avg_turnaround}`;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,25 +478,14 @@ async function runPhase1() {
   phase1Result = data;
   phase2Result = null;
 
-  renderPhase1Insights(data);
   const primary = data.scheduling;
-  document.getElementById("sched-algo-badge").textContent = formatAlgoName(data.primary_algorithm);
 
-  SchedulerViz.renderMetrics(primary.metrics, primary.averages);
-  renderAllAlgoTables(data.comparisons);
-
+  // Hide comparison until tables finish animating
   const compareCard = document.getElementById("sched-compare-card");
-  if (Object.keys(data.comparisons).length > 1) {
-    compareCard.style.display = "";
-    SchedulerViz.renderComparison(data.comparisons);
-  } else {
-    compareCard.style.display = "none";
-  }
+  compareCard.style.display = "none";
 
-  Phase1Tutor.reset(
-    primary.timeline, primary.metrics, primary.averages,
-    formatAlgoName(data.primary_algorithm)
-  );
+  const blocks = buildGanttBlocks(data.comparisons, data.primary_algorithm);
+  Phase1Tutor.resetAll(blocks);
 
   ["btn-phase1-play","btn-phase1-step","btn-phase1-pause"].forEach(id => {
     const b = document.getElementById(id);
@@ -447,10 +495,19 @@ async function runPhase1() {
   if (Playback.isAutoGantt()) {
     await Phase1Tutor.autoPlayGantt();
   } else {
-    SchedulerViz.drawGantt(primary.timeline);
-    Playback.setProgress("gantt-progress-bar", 100, "gantt-progress-label", "Gantt ready");
+    Object.entries(blocks).forEach(([id, b]) => {
+      SchedulerViz.drawGanttForAlgo(id, b.gantt);
+      Playback.setProgressEl(b.progressBar, 100, b.progressLabel, "Gantt ready");
+    });
   }
-  Phase1Tutor.revealMetricsTable();
+
+  // Animate tables after Gantt, then reveal comparison
+  await renderAllAlgoTables(data.comparisons);
+
+  if (Object.keys(data.comparisons).length > 1) {
+    compareCard.style.display = "";
+    SchedulerViz.renderComparison(data.comparisons);
+  }
 
   document.getElementById("proceed-phase2").style.display = "";
   setFooter(
@@ -496,7 +553,29 @@ async function runPhase2() {
   }
 
   phase2Result = diag;
-  DiagnosticsViz.renderDetection(diag);
+
+  // Run diagnostics for ALL selected algorithms in parallel
+  const allAlgos   = phase1Result.sched_algorithms || [phase1Result.primary_algorithm];
+  const diagResults = { [phase1Result.primary_algorithm]: diag };
+
+  await Promise.all(
+    allAlgos
+      .filter(a => a !== phase1Result.primary_algorithm)
+      .map(async (algo) => {
+        const r = await API.post("/api/diagnostics/run", {
+          processes:       phase1Result.processes,
+          sched_algorithm: algo,
+          quantum:         getQuantum(),
+        });
+        if (r.success) diagResults[algo] = r;
+      })
+  );
+
+  // Timeline-row simulation for each algorithm
+  await Phase2Viz.renderAll(diagResults, phase1Result.primary_algorithm, phase1Result.processes);
+
+  // Animate problems table (primary algo)
+  await DiagnosticsViz.renderDetection(diag);
 
   const nOcc = diag.problems_occurred.length;
   document.getElementById("proceed-phase3").style.display = "";
@@ -543,10 +622,16 @@ function setSimControls(enabled) {
   });
 }
 
-/** Part A — Step-by-step visualization of a single sync mechanism. */
+/** Part A — Step-by-step simulation using the real Phase 1 process data + schedule. */
 async function simulateSync() {
   const algoId = document.getElementById("sync-sim-algo")?.value;
   if (!algoId) return;
+
+  if (!phase1Result) {
+    setFooter("Run Phase 1 (CPU Scheduling) first so the simulation uses your real processes.");
+    goToPhase(1);
+    return;
+  }
 
   const btn = document.getElementById("btn-sim-run");
   btn.disabled = true;
@@ -555,11 +640,12 @@ async function simulateSync() {
 
   Playback.setProgress("sync-progress-bar", 0, "sync-progress-label", "Loading…");
   setText("tick-display", "—");
-  setFooter(`Simulating ${formatAlgoName(algoId)} — watch how it protects the critical section…`);
+  setFooter(`Running ${formatAlgoName(algoId)} on your Phase 1 processes…`);
 
-  const data = await API.post("/api/sync/run", {
-    algorithm: algoId,
-    config:    getSyncSimConfig(),
+  const data = await API.post("/api/pipeline/phase2", {
+    sync_algorithms: [algoId],
+    phase1:          phase1Result,
+    sync_config:     getSyncSimConfig(),
   });
   btn.disabled = false;
 
@@ -568,10 +654,8 @@ async function simulateSync() {
     return;
   }
 
-  const steps = (data.steps || []).map(s => ({
-    ...s,
-    phase: s.phase || "sync_during_execution",
-  }));
+  // integrated_steps weaves the real CPU schedule with sync steps, using actual PIDs
+  const steps = data.integrated_steps || [];
 
   SyncViz.setSteps(steps, formatAlgoName(algoId));
   setSimControls(true);
@@ -581,36 +665,91 @@ async function simulateSync() {
   }
 
   setFooter(
-    `${formatAlgoName(algoId)}: ${steps.length} step(s). ` +
+    `${formatAlgoName(algoId)}: ${steps.length} step(s) on your actual processes. ` +
     `Use the playback controls to step through how the critical section is protected.`
   );
 }
 
-/** Part B — Compare all sync techniques on the same Phase 2 workload. */
+/** Part B — Run every sync technique on the real Phase 1 workload, compare empirically. */
 async function runPhase3Compare() {
-  // Auto-run Phase 2 detection if not yet done
+  if (!phase1Result) {
+    setFooter("Run Phase 1 (Scheduling) first.");
+    goToPhase(1);
+    return;
+  }
   if (!phase2Result) {
-    if (!phase1Result) {
-      setFooter("Run Phase 1 (Scheduling) first.");
-      goToPhase(1);
-      return;
-    }
     setFooter("Running problem detection first…");
     await runPhase2();
     if (!phase2Result) return;
   }
 
-  DiagnosticsViz.renderComparison(phase2Result);
+  const COMPARE_TECHNIQUES = ["mutex", "binary_semaphore", "counting_semaphore",
+                               "monitor", "peterson", "dekker"];
+
+  setFooter("Running all synchronization techniques on your actual processes…");
+
+  // Run all techniques through the real pipeline in parallel
+  const pipelineResults = await Promise.all(
+    COMPARE_TECHNIQUES.map(async (algo) => {
+      const r = await API.post("/api/pipeline/phase2", {
+        sync_algorithms: [algo],
+        phase1:          phase1Result,
+        sync_config:     getSyncSimConfig(),
+      });
+      return r.success ? { algo, data: r } : null;
+    })
+  );
+
+  // Build an enriched comparison by merging real simulation metrics
+  // with the prevention data already computed by the diagnostics engine
+  const diagTechMap = {};
+  (phase2Result.techniques || []).forEach(t => { diagTechMap[t.technique] = t; });
+
+  const enriched = pipelineResults
+    .filter(Boolean)
+    .map(({ algo, data }) => {
+      const simComp   = data.sync_comparison || {};
+      const ranking   = (simComp.rankings || []).find(r => r.algorithm === algo) || {};
+      const diagTech  = diagTechMap[algo] || {};
+      const metrics   = ranking.metrics || {};
+
+      return {
+        ...diagTech,
+        technique:   algo,
+        name:        ranking.name || diagTech.name || formatAlgoName(algo),
+        score:       ranking.score ?? diagTech.score ?? 0,
+        sim_metrics: {
+          total_steps:      metrics.total_steps      ?? "—",
+          cs_entries:       metrics.cs_entries       ?? "—",
+          wait_events:      metrics.wait_events      ?? "—",
+          busy_wait_steps:  metrics.busy_wait_steps  ?? "—",
+          mutual_exclusion: metrics.mutual_exclusion ?? true,
+          deadlock_free:    metrics.deadlock_free     ?? true,
+        },
+        strengths:  ranking.strengths  || diagTech.strengths  || [],
+        weaknesses: ranking.weaknesses || diagTech.weaknesses || [],
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  // Patch phase2Result with real scores for the comparison render
+  const enrichedPhase2 = {
+    ...phase2Result,
+    techniques: enriched,
+    best: enriched[0] || phase2Result.best,
+  };
+
+  DiagnosticsViz.renderComparison(enrichedPhase2);
 
   document.getElementById("comparison-section").style.display = "";
   document.getElementById("performance-section").style.display = "";
   document.getElementById("proceed-phase4").style.display = "";
 
-  const best = phase2Result.best;
+  const best = enriched[0];
   setFooter(
-    `All techniques compared on the same workload. ` +
+    `All ${enriched.length} techniques simulated on your actual processes. ` +
     `Best = ${best?.name || "—"} (score ${best?.score ?? "—"}/100). ` +
-    `Proceed to Phase 4 for the full analysis report.`
+    `Proceed to Phase 4 for the full report.`
   );
 
   if (!missionRunning && document.getElementById("auto-advance").checked) {
@@ -753,19 +892,22 @@ function resetMission() {
     if (el) el.style.display = "none";
   });
 
-  ["phase1-insights","sched-avg-stats","sched-all-algo-tables",
-   "sched-compare-table","gantt-legend","phase1-tutor-log",
+  ["sched-avg-stats","sched-all-algo-tables",
+   "sched-compare-table","phase1-tutor-log",
    "phase2-process-context","phase3-problem-context",
    "technique-best-banner","workflow-summary"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = "";
   });
 
+  const ganttContainer = document.getElementById("gantt-charts-container");
+  if (ganttContainer) ganttContainer.innerHTML = "";
+  SchedulerViz._canvases = {};
+
   // Destroy comparison charts so stale data doesn't linger
   if (SchedulerViz.chartWt)  { SchedulerViz.chartWt.destroy();  SchedulerViz.chartWt  = null; }
   if (SchedulerViz.chartTat) { SchedulerViz.chartTat.destroy(); SchedulerViz.chartTat = null; }
-  SchedulerViz._lastGantt  = null;
-  SchedulerViz.pidColors   = {};
+  SchedulerViz.pidColors = {};
 
   const detSummary = document.getElementById("detection-summary");
   if (detSummary) {
@@ -774,7 +916,6 @@ function resetMission() {
       "synchronization issues arise from concurrent unsynchronized access.";
   }
 
-  setText("sched-algo-badge", "—");
   setText("score-ring", "—");
   setText("tick-display", "—");
 
@@ -794,12 +935,6 @@ function resetMission() {
 
   Playback.setProgress("gantt-progress-bar", 0, "gantt-progress-label", "Waiting…");
   Playback.setProgress("sync-progress-bar",  0, "sync-progress-label",  "—");
-
-  if (SchedulerViz.ganttCanvas) {
-    SchedulerViz.ganttCanvas
-      .getContext("2d")
-      .clearRect(0, 0, SchedulerViz.ganttCanvas.width, SchedulerViz.ganttCanvas.height);
-  }
 
   // Reset Phase 2 sidebar context to placeholder
   const ctx2 = document.getElementById("phase2-process-context");

@@ -1,10 +1,7 @@
-/** Phase 1 — slow Gantt build + metrics reveal for students */
+/** Phase 1 — parallel Gantt build for all selected algorithms */
 
 const Phase1Tutor = {
-  gantt: [],
-  metrics: [],
-  averages: null,
-  segmentIndex: 0,
+  blocks: [],   // [{id, gantt, canvas, legendEl, progressBar, progressLabel, label, segmentIndex}]
   logEl: null,
   playing: false,
   timer: null,
@@ -13,19 +10,27 @@ const Phase1Tutor = {
     this.logEl = document.getElementById("phase1-tutor-log");
   },
 
-  reset(gantt, metrics, averages, label) {
+  resetAll(blocksMap) {
     this.stop();
-    this.gantt     = gantt    || [];
-    this.metrics   = metrics  || [];
-    this.averages  = averages;
-    this.segmentIndex = 0;
+    this.blocks = Object.entries(blocksMap).map(([id, b]) => ({
+      id,
+      gantt:         b.gantt        || [],
+      canvas:        b.canvas,
+      legendEl:      b.legendEl,
+      progressBar:   b.progressBar,
+      progressLabel: b.progressLabel,
+      label:         b.label,
+      segmentIndex:  0,
+    }));
     if (this.logEl) this.logEl.innerHTML = "";
-    Playback.setProgress("gantt-progress-bar", 0, "gantt-progress-label", "Ready to build Gantt…");
-    const title = label
-      ? `${label} — building Gantt chart`
-      : "Phase 1: Watch the Gantt chart build one CPU slice at a time.";
-    this.log(title);
+    this.blocks.forEach((b) =>
+      Playback.setProgressEl(b.progressBar, 0, b.progressLabel, "Ready to build Gantt…")
+    );
+    const names = this.blocks.map((b) => b.label).join(" & ");
+    this.log(`${names} — building Gantt chart${this.blocks.length > 1 ? "s" : ""}`);
   },
+
+  reset() {},   // legacy no-op
 
   log(msg) {
     if (!this.logEl) return;
@@ -42,63 +47,60 @@ const Phase1Tutor = {
     this.timer = null;
   },
 
-  drawPartial(count) {
-    const partial = this.gantt.slice(0, count);
-    SchedulerViz.drawGantt(
-      partial.map((s, i) => ({
-        ...s,
-        color: SchedulerViz.colorForPid(s.pid, i),
-      }))
-    );
+  _drawPartialForBlock(block) {
+    const partial = block.gantt.slice(0, block.segmentIndex).map((s, i) => ({
+      ...s,
+      color: SchedulerViz.colorForPid(s.pid, i),
+    }));
+    SchedulerViz.drawGanttToEl(partial, block.canvas, block.legendEl);
   },
 
   nextSegment() {
-    if (this.segmentIndex >= this.gantt.length) {
-      this.log("Gantt complete.");
-      Playback.setProgress("gantt-progress-bar", 100, "gantt-progress-label", "Gantt complete");
-      return false;
+    let anyMore = false;
+    this.blocks.forEach((block) => {
+      if (block.segmentIndex >= block.gantt.length) return;
+      const seg = block.gantt[block.segmentIndex];
+      block.segmentIndex++;
+      this._drawPartialForBlock(block);
+      const pct = (block.segmentIndex / block.gantt.length) * 100;
+      Playback.setProgressEl(block.progressBar, pct, block.progressLabel,
+        `Segment ${block.segmentIndex}/${block.gantt.length}: ${seg.pid}`);
+      if (block.segmentIndex < block.gantt.length) anyMore = true;
+    });
+    return anyMore;
+  },
+
+  async _autoPlayBlock(block, delay) {
+    block.segmentIndex = 0;
+    this._drawPartialForBlock(block);
+    while (this.playing && block.segmentIndex < block.gantt.length) {
+      const seg = block.gantt[block.segmentIndex];
+      block.segmentIndex++;
+      this._drawPartialForBlock(block);
+      const pct = (block.segmentIndex / block.gantt.length) * 100;
+      Playback.setProgressEl(block.progressBar, pct, block.progressLabel,
+        `${block.label}: ${seg.pid} t=${seg.start}→${seg.end}`);
+      if (seg.pid === "IDLE") {
+        this.log(`[${block.label}] IDLE: t=${seg.start} to t=${seg.end}`);
+      } else {
+        this.log(`[${block.label}] ${seg.pid}: t=${seg.start}→${seg.end} (slice=${seg.end - seg.start})`);
+      }
+      await Playback.sleep(delay);
     }
-    const seg = this.gantt[this.segmentIndex];
-    this.segmentIndex += 1;
-    this.drawPartial(this.segmentIndex);
-    const pct = (this.segmentIndex / this.gantt.length) * 100;
-    Playback.setProgress(
-      "gantt-progress-bar",
-      pct,
-      "gantt-progress-label",
-      `Segment ${this.segmentIndex}/${this.gantt.length}: ${seg.pid}`
-    );
-    const dur = seg.end - seg.start;
-    if (seg.pid === "IDLE") {
-      this.log(`IDLE: t=${seg.start} to t=${seg.end} (CPU free)`);
-    } else {
-      this.log(`${seg.pid}: t=${seg.start} → t=${seg.end} (slice = ${dur})`);
-    }
-    return true;
+    Playback.setProgressEl(block.progressBar, 100, block.progressLabel, `${block.label}: complete`);
   },
 
   async autoPlayGantt() {
     this.stop();
     this.playing = true;
-    this.segmentIndex = 0;
-    this.drawPartial(0);
     const delay = Playback.getStepDelay(Playback.getSpeedSlider());
-
-    while (this.playing && this.segmentIndex < this.gantt.length) {
-      this.nextSegment();
-      document.getElementById("btn-phase1-step").disabled = false;
-      await Playback.sleep(delay);
-    }
+    await Promise.all(this.blocks.map((b) => this._autoPlayBlock(b, delay)));
     this.playing = false;
-    document.getElementById("btn-phase1-step").disabled =
-      this.segmentIndex >= this.gantt.length;
+    const stepBtn = document.getElementById("btn-phase1-step");
+    if (stepBtn) stepBtn.disabled = true;
   },
 
   async revealMetricsTable() {
-    if (this.averages) {
-      const a = this.averages;
-      SchedulerViz.renderAvgPills(a);
-      this.log(`Averages — ATAT=${a.avg_turnaround}, AWT=${a.avg_waiting}, ART=${a.avg_response}`);
-    }
+    // averages rendered by main.js directly after autoPlayGantt
   },
 };

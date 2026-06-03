@@ -1,11 +1,10 @@
 /** CPU scheduling — responsive Gantt, full metrics tables, comparison charts */
 
 const SchedulerViz = {
-  ganttCanvas: null,
-  ganttCtx: null,
+  pidColors: {},
+  _canvases: {},
   chartWt: null,
   chartTat: null,
-  pidColors: {},
 
   colorForPid(pid, idx) {
     if (pid === "IDLE") return "#2a1040";
@@ -20,39 +19,35 @@ const SchedulerViz = {
   },
 
   init() {
-    this.ganttCanvas = document.getElementById("sched-canvas");
-    if (this.ganttCanvas) {
-      this.ganttCtx = this.ganttCanvas.getContext("2d");
-      this._resizeGantt();
-      window.addEventListener("resize", () => this._resizeGantt());
-    }
+    window.addEventListener("resize", () => {
+      Object.values(this._canvases).forEach(({ canvas, legendEl, lastTimeline }) => {
+        const wrap = canvas?.parentElement;
+        if (!wrap || !canvas) return;
+        canvas.width = Math.max(wrap.clientWidth - 2, 320);
+        if (lastTimeline) this.drawGanttToEl(lastTimeline, canvas, legendEl);
+      });
+    });
   },
 
-  _resizeGantt() {
-    const wrap = this.ganttCanvas?.parentElement;
-    if (!wrap || !this.ganttCanvas) return;
-    const w = Math.max(wrap.clientWidth - 2, 320);
-    const h = 160;
-    this.ganttCanvas.width = w;
-    this.ganttCanvas.height = h;
-    if (this._lastGantt) this.drawGantt(this._lastGantt);
+  registerCanvas(algoId, canvas, legendEl) {
+    const wrap = canvas.parentElement;
+    canvas.width  = wrap ? Math.max(wrap.clientWidth - 2, 320) : 600;
+    canvas.height = 160;
+    this._canvases[algoId] = { canvas, legendEl, lastTimeline: null };
   },
 
-  drawGantt(timeline) {
-    this._lastGantt = timeline;
-    const ctx = this.ganttCtx;
-    const canvas = this.ganttCanvas;
+  drawGanttToEl(timeline, canvas, legendEl) {
+    const ctx = canvas?.getContext("2d");
     if (!ctx || !canvas || !timeline?.length) return;
 
     const padding = { left: 44, right: 16, top: 28, bottom: 36 };
-    const maxEnd = Math.max(...timeline.map((t) => t.end), 1);
-    const chartW = canvas.width - padding.left - padding.right;
-    const barH = 48;
-    const y = padding.top;
+    const maxEnd  = Math.max(...timeline.map((t) => t.end), 1);
+    const chartW  = canvas.width - padding.left - padding.right;
+    const barH    = 48;
+    const y       = padding.top;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Vice City dark-purple background
     const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
     grad.addColorStop(0, "#100020");
     grad.addColorStop(1, "#0C0018");
@@ -65,13 +60,13 @@ const SchedulerViz = {
       const color = seg.color || this.colorForPid(seg.pid, i);
 
       if (seg.pid === "IDLE") {
-        ctx.fillStyle = "#1e0838";
+        ctx.fillStyle  = "#1e0838";
         ctx.setLineDash([4, 4]);
         ctx.shadowBlur = 0;
       } else {
         ctx.shadowColor = color;
-        ctx.shadowBlur = 14;
-        ctx.fillStyle = color;
+        ctx.shadowBlur  = 14;
+        ctx.fillStyle   = color;
         ctx.setLineDash([]);
       }
       ctx.fillRect(x, y, w, barH);
@@ -79,34 +74,32 @@ const SchedulerViz = {
       ctx.shadowBlur = 0;
 
       ctx.strokeStyle = "rgba(255,255,255,0.2)";
-      ctx.lineWidth = 1;
+      ctx.lineWidth   = 1;
       ctx.strokeRect(x, y, w, barH);
 
       if (w > 28 && seg.pid !== "IDLE") {
-        ctx.fillStyle = "#0C0018";
-        ctx.font = "bold 12px JetBrains Mono";
-        ctx.textAlign = "center";
+        ctx.fillStyle  = "#0C0018";
+        ctx.font       = "bold 12px JetBrains Mono";
+        ctx.textAlign  = "center";
         ctx.fillText(seg.pid, x + w / 2, y + barH / 2 + 4);
       }
       if (seg.pid === "IDLE" && w > 20) {
         ctx.fillStyle = "#6040A0";
-        ctx.font = "10px JetBrains Mono";
+        ctx.font      = "10px JetBrains Mono";
         ctx.textAlign = "center";
         ctx.fillText("IDLE", x + w / 2, y + barH / 2 + 4);
       }
     });
 
-    // Time axis line — neon pink
     ctx.strokeStyle = "rgba(255, 45, 120, 0.5)";
-    ctx.lineWidth = 2;
+    ctx.lineWidth   = 2;
     ctx.beginPath();
     ctx.moveTo(padding.left, y + barH + 12);
     ctx.lineTo(canvas.width - padding.right, y + barH + 12);
     ctx.stroke();
 
-    // Tick labels
     ctx.fillStyle = "#9070B0";
-    ctx.font = "10px JetBrains Mono";
+    ctx.font      = "10px JetBrains Mono";
     ctx.textAlign = "center";
     const step = maxEnd <= 12 ? 1 : Math.ceil(maxEnd / 12);
     for (let t = 0; t <= maxEnd; t += step) {
@@ -114,11 +107,17 @@ const SchedulerViz = {
       ctx.fillText(String(t), x, y + barH + 28);
     }
 
-    this.renderLegend(timeline);
+    if (legendEl) this.renderLegendToEl(timeline, legendEl);
   },
 
-  renderLegend(timeline) {
-    const el = document.getElementById("gantt-legend");
+  drawGanttForAlgo(algoId, timeline) {
+    const entry = this._canvases[algoId];
+    if (!entry) return;
+    entry.lastTimeline = timeline;
+    this.drawGanttToEl(timeline, entry.canvas, entry.legendEl);
+  },
+
+  renderLegendToEl(timeline, el) {
     if (!el) return;
     const pids = [...new Set(timeline.map((s) => s.pid))].filter((p) => p !== "IDLE");
     el.innerHTML = [

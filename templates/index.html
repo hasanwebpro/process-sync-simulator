@@ -155,30 +155,12 @@
         <!-- RIGHT: Visualization -->
         <div class="viz-column">
 
-          <div id="phase1-insights" class="insights-panel"></div>
-
           <!-- Gantt Chart -->
           <div class="card hud-card glow-card gantt-card">
             <div class="card-header">
               <h3>Gantt Chart</h3>
-              <span id="sched-algo-badge" class="badge">—</span>
             </div>
-            <div class="progress-track"><div id="gantt-progress-bar" class="progress-fill"></div></div>
-            <span id="gantt-progress-label" class="progress-label">Waiting…</span>
-            <div class="gantt-wrap"><canvas id="sched-canvas"></canvas></div>
-            <div id="gantt-legend" class="gantt-legend"></div>
-          </div>
-
-          <!-- Performance Metrics -->
-          <div class="card hud-card glow-card">
-            <h3>Performance Metrics <span class="subtitle">Primary algorithm averages</span></h3>
-            <div id="sched-avg-stats" class="avg-stats-rings"></div>
-            <dl class="metric-defs metric-defs--grid">
-              <div><dt>CT — Completion Time</dt><dd>When the process finishes.</dd></div>
-              <div><dt>TAT — Turnaround Time</dt><dd>CT − Arrival Time.</dd></div>
-              <div><dt>WT — Waiting Time</dt><dd>TAT − Burst Time.</dd></div>
-              <div><dt>RT — Response Time</dt><dd>First run − Arrival Time.</dd></div>
-            </dl>
+            <div id="gantt-charts-container" class="gantt-charts-container"></div>
           </div>
 
           <!-- Per-Algorithm Tables -->
@@ -244,17 +226,16 @@
         <!-- RIGHT: Detection Results -->
         <div class="viz-column">
 
+          <!-- Phase 2 — Timeline simulation (no sync) -->
+          <div id="phase2-sim-container" class="phase2-sim-container"></div>
+
+          <!-- Phase 2 — Problems table -->
           <div class="card hud-card glow-card detect-card">
             <div class="card-header">
-              <h3>Problems Exposed Without Synchronization</h3>
-              <span class="badge">Unsynchronized concurrent access</span>
+              <h3>Problems Exposed</h3>
+              <span id="detection-summary" class="badge">—</span>
             </div>
-            <p id="detection-summary" class="hint">
-              Run scheduling (Phase 1) then click "Detect Problems" — problems that
-              arise from concurrent unsynchronized access to shared resources will
-              appear here.
-            </p>
-            <div id="detection-grid" class="detection-grid"></div>
+            <div id="detection-grid"></div>
           </div>
 
           <!-- Proceed -->
@@ -483,6 +464,7 @@
 
   <!-- ===== SCRIPTS ===== -->
   <script src="{{ url_for('static', filename='js/playback.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/phase2-viz.js') }}"></script>
   <script src="{{ url_for('static', filename='js/nasa-viz.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sync-insights.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sync-viz.js') }}"></script>

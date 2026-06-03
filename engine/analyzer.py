@@ -83,57 +83,102 @@ class AnalysisEngine:
     }
 
     def analyze_sync(self, results: list[dict[str, Any]]) -> dict[str, Any]:
-        """Compare multiple synchronization simulation runs."""
+        """
+        Compare sync technique runs using real simulation metrics only —
+        no hardcoded scores. All values derived from actual step data.
+        """
         if not results:
             return {"error": "No results to analyze"}
 
         scored = []
         for r in results:
-            algo = r.get("algorithm", "")
-            rules = self.SYNC_RULES.get(algo, {})
+            algo    = r.get("algorithm", "")
+            steps   = r.get("steps", [])
             summary = r.get("summary", {})
-            score = rules.get("score", 70)
+            total   = max(len(steps), 1)
 
-            if summary.get("race_detected"):
-                score = max(20, score - 40)
-            if summary.get("deadlock"):
-                score = max(15, score - 35)
-            if summary.get("mutual_exclusion"):
-                score = min(100, score + 5)
+            # ── Real metrics from simulation steps ────────────────────────
+            wait_events = sum(
+                1 for s in steps
+                if s.get("action") in ("blocked", "wait", "block", "waiting", "write_block")
+            )
+            busy_wait_steps = sum(
+                1 for s in steps
+                if s.get("action") == "busy_wait"
+                or ("busy" in s.get("message", "").lower() and s.get("action") == "wait")
+            )
+            cs_entries = sum(1 for s in steps if s.get("action") == "enter_cs")
 
+            mutual_exclusion = summary.get("mutual_exclusion", True)
+            deadlock_free    = not summary.get("deadlock", False)
+            race_detected    = summary.get("race_detected", False)
+
+            # Counter correctness: final == expected (if both present)
+            final    = summary.get("final_counter")
+            expected = summary.get("expected_counter", final)
+            if final is not None and expected is not None and expected > 0:
+                correctness = 1.0 if final == expected else max(
+                    0.0, 1.0 - abs(final - expected) / expected
+                )
+            else:
+                correctness = 1.0 if mutual_exclusion else 0.4
+
+            # ── Score: computed entirely from simulation ───────────────────
+            # Mutual exclusion maintained            → 40 pts (binary)
+            # Deadlock free                          → 25 pts (binary)
+            # Counter correctness                    → 20 pts (continuous)
+            # Efficiency: penalty for wait+busy-wait → -15 pts max
+            wait_ratio      = (wait_events + busy_wait_steps) / total
+            busy_ratio      = busy_wait_steps / total
+            efficiency_pen  = min(15.0, wait_ratio * 20 + busy_ratio * 20)
+
+            score = round(
+                40.0 * (1.0 if mutual_exclusion else 0.0) +
+                25.0 * (1.0 if deadlock_free    else 0.0) +
+                20.0 * correctness -
+                efficiency_pen +
+                (0.0 if race_detected else 0.0),   # already captured in ME
+                1,
+            )
+            score = max(0.0, min(100.0, score))
+
+            rules = self.SYNC_RULES.get(algo, {})
             scored.append({
                 "algorithm": algo,
                 "name": next(
-                    (a["name"] for a in SYNC_ALGORITHM_NAMES if a["id"] == algo),
-                    algo,
+                    (a["name"] for a in SYNC_ALGORITHM_NAMES if a["id"] == algo), algo
                 ),
                 "score": score,
-                "summary": summary,
-                "strengths": rules.get("strengths", []),
+                "metrics": {
+                    "total_steps":      total,
+                    "cs_entries":       cs_entries,
+                    "wait_events":      wait_events,
+                    "busy_wait_steps":  busy_wait_steps,
+                    "mutual_exclusion": mutual_exclusion,
+                    "deadlock_free":    deadlock_free,
+                    "correctness":      round(correctness, 2),
+                },
+                "summary":    summary,
+                "strengths":  rules.get("strengths", []),
                 "weaknesses": rules.get("weaknesses", []),
-                "use_case": rules.get("use_case", ""),
+                "use_case":   rules.get("use_case", ""),
             })
 
         scored.sort(key=lambda x: x["score"], reverse=True)
-        best = scored[0]
+        best  = scored[0]
         worst = scored[-1]
 
-        explanation = self._sync_explanation(best, worst, scored)
-        deadlock = any(
-            r.get("summary", {}).get("deadlock") for r in results
-        )
-        starvation = any(
-            r.get("summary", {}).get("starvation") for r in results
-        )
+        deadlock   = any(r.get("summary", {}).get("deadlock")      for r in results)
+        starvation = any(r.get("summary", {}).get("starvation")     for r in results)
 
         return {
-            "rankings": scored,
-            "best": best,
-            "worst": worst,
-            "deadlock_detected": deadlock,
+            "rankings":           scored,
+            "best":               best,
+            "worst":              worst,
+            "deadlock_detected":  deadlock,
             "starvation_detected": starvation,
-            "explanation": explanation,
-            "recommendation": self._sync_recommendation(best),
+            "explanation":        self._sync_explanation(best, worst, scored),
+            "recommendation":     self._sync_recommendation(best),
         }
 
     def analyze_scheduling(self, comparison: dict[str, Any]) -> dict[str, Any]:

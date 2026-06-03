@@ -472,21 +472,25 @@ label input:focus, label select:focus {
    Insights panel
    ================================================================ */
 .insights-panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 0.45rem;
   margin-bottom: 0.9rem;
   padding: 0.65rem;
   background: rgba(37,99,235,0.04);
   border: 1.5px solid rgba(37,99,235,0.12);
   border-radius: 10px;
+  overflow-x: auto;
 }
 .insight-chip {
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0.45rem 0.6rem;
   background: var(--surface);
   border-radius: 7px;
   border-left: 2.5px solid var(--hud-teal);
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  white-space: nowrap;
 }
 .insight-key {
   display: block;
@@ -501,7 +505,7 @@ label input:focus, label select:focus {
   font-size: 0.9rem;
   font-weight: 700;
   color: var(--hud-teal);
-  word-break: break-word;
+  white-space: nowrap;
 }
 
 /* ================================================================
@@ -552,7 +556,38 @@ label input:focus, label select:focus {
   width: 100% !important;
   height: auto;
 }
-#sync-canvas, #sched-canvas { width: 100%; max-width: 100%; }
+#sync-canvas { width: 100%; max-width: 100%; }
+
+.gantt-charts-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.gantt-algo-block {
+  padding-top: 0.35rem;
+}
+.gantt-algo-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.3rem;
+}
+.gantt-algo-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.gantt-algo-order {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--hud-teal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .gantt-legend {
   display: flex;
   flex-wrap: wrap;
@@ -607,6 +642,15 @@ label input:focus, label select:focus {
 .metrics-table td { padding: 0.45rem; text-align: center; border-bottom: 1px solid var(--border); }
 .metrics-table tr.row-best { background: rgba(5, 150, 105, 0.06); }
 .metrics-table tr.row-best td:first-child { color: var(--hud-green); font-weight: 700; }
+
+@keyframes rowAppear {
+  0%   { opacity: 0; transform: translateX(-22px); background-color: rgba(0,212,212,0.18); }
+  55%  { opacity: 1; transform: translateX(3px);   background-color: rgba(0,212,212,0.10); }
+  100% { opacity: 1; transform: translateX(0);     background-color: transparent; }
+}
+.metrics-table tr.row-appear {
+  animation: rowAppear 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
 
 @keyframes rowGlow {
   from { background: rgba(233, 30, 140, 0.1); }
@@ -1110,57 +1154,143 @@ label input:focus, label select:focus {
 .avg-chip.accent strong { color: var(--hud-pink); }
 
 /* ================================================================
-   Detection grid (Phase 2)
+   Phase 2 — warn progress bar + timeline simulation
    ================================================================ */
-.detect-card .badge { background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3); color: var(--danger); }
-.detection-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
-  gap: 0.7rem;
-  margin-top: 0.7rem;
+.progress-fill--warn { background: linear-gradient(90deg, #FF2D78, #FF4757); }
+.badge-warn { background: rgba(220,38,38,0.1); border-color: rgba(220,38,38,0.3); color: var(--danger); }
+
+.phase2-sim-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
 }
-.dx-card {
-  background: var(--surface);
+.p2-algo-block { padding-top: 0.1rem; }
+
+.p2-algo-header {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+.p2-algo-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.p2-conflict-count {
+  font-size: 0.72rem;
+  font-family: var(--mono);
+  font-weight: 600;
+  margin-left: auto;
+}
+.p2-cc-bad { color: var(--danger); }
+.p2-cc-ok  { color: var(--hud-green); }
+
+.p2-canvas-wrap {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #1A1033;
   border: 1.5px solid var(--border);
-  border-left: 3px solid var(--border);
-  border-radius: 10px;
-  padding: 0.75rem 0.85rem;
-  transition: box-shadow 0.18s, transform 0.18s;
+  margin-top: 0.4rem;
 }
-.dx-card.dx-yes { border-left-color: var(--danger);    box-shadow: 0 1px 6px rgba(220,38,38,0.08); }
-.dx-card.dx-no  { border-left-color: var(--hud-green); }
-.dx-card:hover  { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-.dx-card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 0.45rem; margin-bottom: 0.2rem;
+.p2-canvas-wrap canvas {
+  display: block;
+  width: 100% !important;
 }
-.dx-name    { font-weight: 800; font-size: 0.95rem; color: var(--text); }
-.dx-flag {
-  font-size: 0.62rem; font-weight: 700;
-  padding: 0.12rem 0.45rem;
-  border-radius: 999px;
-  letter-spacing: 0.04em;
+
+.p2-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.55rem;
+  font-size: 0.72rem;
+  color: var(--muted);
   font-family: var(--mono);
 }
-.flag-yes { background: rgba(220,38,38,0.1);   color: var(--danger);     border: 1px solid rgba(220,38,38,0.35); }
-.flag-no  { background: rgba(5,150,105,0.1);   color: var(--hud-green);  border: 1px solid rgba(5,150,105,0.35); }
-.dx-cat { font-size: 0.58rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.35rem; }
-.dx-explain { font-size: 0.85rem; line-height: 1.6; color: var(--muted); margin-bottom: 0.45rem; font-weight: 500; }
-.dx-metrics { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.35rem; }
-.dx-metric {
-  display: inline-flex; gap: 0.28rem; align-items: baseline;
-  padding: 0.15rem 0.4rem;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.66rem;
+.p2-dot {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  margin-right: 0.3rem;
+  vertical-align: middle;
 }
-.dx-mk { color: var(--muted); }
-.dx-mv { font-family: var(--mono); color: var(--hud-teal); font-weight: 700; }
-.dx-events { font-size: 0.7rem; margin-top: 0.2rem; }
-.dx-events summary { cursor: pointer; color: var(--hud-teal); font-size: 0.68rem; }
-.dx-events ul { margin: 0.35rem 0 0 0.9rem; color: var(--muted); line-height: 1.5; }
-.dx-events li { margin-bottom: 0.18rem; font-family: var(--mono); font-size: 0.66rem; }
+.p2-dot-stripe {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(245,158,11,0.35) 0px, rgba(245,158,11,0.35) 2px,
+    transparent 2px, transparent 4px
+  );
+}
+
+.p2-step-log {
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.6;
+  min-height: 2.8rem;
+  transition: border-color 0.2s, background 0.2s;
+}
+.p2-log-idle     { color: var(--muted); font-weight: 600; }
+.p2-log-cs       { color: rgba(245,158,11,0.95); font-weight: 700; }
+.p2-log-ok       { color: var(--hud-green); font-weight: 700; }
+.p2-log-conflict {
+  color: var(--danger);
+  font-weight: 800;
+  display: block;
+  border-left: 3px solid var(--danger);
+  padding-left: 0.5rem;
+}
+
+/* ================================================================
+   Detection table (Phase 2)
+   ================================================================ */
+.dx-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+.dx-table thead tr {
+  border-bottom: 2px solid var(--border);
+}
+.dx-th-name   { text-align: left;   padding: 0.5rem 0.75rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; width: 30%; }
+.dx-th-status { text-align: center; padding: 0.5rem 0.5rem;  color: var(--muted); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; width: 10%; }
+.dx-th-why    { text-align: left;   padding: 0.5rem 0.75rem; color: var(--muted); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.dx-row td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.dx-row-bad { background: rgba(220,38,38,0.03); }
+.dx-row-ok  { background: rgba(5,150,105,0.03); }
+.dx-row:last-child td { border-bottom: none; }
+
+.dx-prob-name { font-weight: 600; color: var(--text); }
+
+.dx-status-cell { text-align: center; }
+.dx-tick  { font-size: 1.1rem; font-weight: 700; color: var(--hud-green); line-height: 1; }
+.dx-cross { font-size: 1.1rem; font-weight: 700; color: var(--danger);    line-height: 1; }
+
+.dx-why-cell { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+
+.dx-sched-section { margin-top: 1.1rem; }
+.dx-sched-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+  padding-left: 0.1rem;
+}
+.dx-table-sched { opacity: 0.85; }
 
 /* ================================================================
    Technique comparison (Phase 3)

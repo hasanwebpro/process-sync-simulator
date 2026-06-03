@@ -46,4 +46,9 @@ const Playback = {
       if (el) el.textContent = text;
     }
   },
+
+  setProgressEl(barEl, pct, labelEl, text) {
+    if (barEl) barEl.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    if (labelEl && text !== undefined) labelEl.textContent = text;
+  },
 };
