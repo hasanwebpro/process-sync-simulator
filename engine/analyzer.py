@@ -1,4 +1,49 @@
-"""Analysis and intelligence engine — rule-based with optional OpenAI."""
+"""
+analyzer.py — Phase 3/4 Analysis and Scoring Engine
+=====================================================
+
+Responsibilities
+----------------
+1.  analyze_sync()        — score and rank synchronization techniques based on
+                            REAL simulation metrics (CS entries, wait events,
+                            mutual exclusion, deadlock freedom, correctness).
+
+2.  analyze_scheduling()  — rank scheduling algorithms by average waiting time.
+
+3.  generate_multi_conclusion() — produce the full Phase 4 executive summary,
+                            recommendation bullets, and findings text.
+
+4.  build_llm_context()   — format results as a plain-text string for an
+                            optional OpenAI API call.
+
+5.  explain_with_ai()     — call OpenAI gpt-4o-mini for a 2-3 sentence
+                            plain-English explanation (falls back gracefully if
+                            no API key is configured).
+
+Scoring methodology (analyze_sync)
+------------------------------------
+All scores are derived from actual simulation step data — no hardcoded values:
+
+    Score = 50 × mutual_exclusion   (binary: does the algorithm maintain ME?)
+          + 30 × deadlock_free      (binary: does it avoid deadlock?)
+          + 20 × correctness        (continuous 0–1: is the shared counter correct?)
+          − efficiency_penalty      (0–20: penalises busy-waiting and excess waits)
+
+    Maximum achievable score: 100/100 (correct, deadlock-free, zero overhead).
+
+    Weights rationale:
+    - ME (50 pts): the primary goal of any synchronization primitive.
+    - Deadlock-free (30 pts): deadlock is catastrophic; high weight.
+    - Correctness (20 pts): counter matches expected value (n × iterations).
+    - Efficiency penalty: busy-wait burns CPU; blocking primitives score higher
+      than spinlocks/Peterson on equal correctness.
+
+SYNC_RULES and SCHED_RULES
+---------------------------
+Static dictionaries mapping algorithm IDs to textbook-sourced strengths,
+weaknesses, and use-case text.  These are EDUCATIONAL LABELS, not scores.
+The actual scores come from simulation data, not from these dicts.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +54,12 @@ from .constants import SYNC_ALGORITHM_NAMES
 
 
 class AnalysisEngine:
-    """Compares sync/scheduling results and generates explanations."""
+    """
+    Phase 3/4 analysis: score sync techniques, rank schedulers, generate reports.
+
+    All scoring is driven by real simulation output.  Static rule tables
+    (SYNC_RULES, SCHED_RULES) provide textbook-sourced narrative text only.
+    """
 
     SYNC_RULES = {
         "peterson": {
@@ -74,18 +124,42 @@ class AnalysisEngine:
         },
     }
 
+    # Textbook-sourced scheduling algorithm characteristics (narrative only).
+    # Actual performance numbers come from the CPUScheduler simulation.
     SCHED_RULES = {
-        "fcfs": {"best_for": "Simple batch systems", "fairness": "Fair in arrival order", "overhead": "Low"},
-        "sjf": {"best_for": "Minimizing average waiting time", "fairness": "Can starve long jobs", "overhead": "Medium"},
-        "srtf": {"best_for": "Optimal average waiting (preemptive)", "fairness": "Starvation risk", "overhead": "High"},
-        "round_robin": {"best_for": "Time-sharing interactive systems", "fairness": "Very fair", "overhead": "Context switch cost"},
-        "priority": {"best_for": "Real-time / importance-based tasks", "fairness": "Low-priority starvation", "overhead": "Low"},
+        "fcfs":        {"best_for": "Simple batch systems",                    "fairness": "Fair in arrival order",   "overhead": "Low"},
+        "sjf":         {"best_for": "Minimising average waiting time",         "fairness": "Can starve long jobs",    "overhead": "Medium"},
+        "srtf":        {"best_for": "Optimal average waiting (preemptive)",    "fairness": "Starvation risk",         "overhead": "High"},
+        "round_robin": {"best_for": "Time-sharing interactive systems",        "fairness": "Very fair (bounded wait)", "overhead": "Context switch cost"},
+        "priority":    {"best_for": "Real-time / importance-based tasks",      "fairness": "Low-priority starvation", "overhead": "Low"},
     }
 
     def analyze_sync(self, results: list[dict[str, Any]]) -> dict[str, Any]:
         """
-        Compare sync technique runs using real simulation metrics only —
-        no hardcoded scores. All values derived from actual step data.
+        Score and rank synchronization techniques from real simulation metrics.
+
+        Input: a list of SyncSimulator.run() result dicts (one per technique).
+        Each result contains:
+            algorithm  — technique ID
+            steps      — list of simulation step snapshots
+            summary    — final outcome flags (mutual_exclusion, deadlock, etc.)
+
+        Metrics extracted from steps (all counts, not estimates):
+            wait_events      — steps with action in {blocked, wait, block, …}
+            busy_wait_steps  — steps with action == busy_wait or "busy" in message
+            cs_entries       — steps with action == enter_cs
+
+        Scoring formula (weights sum to 100):
+            50 × mutual_exclusion  (did the algorithm maintain ME throughout?)
+            30 × deadlock_free     (did it avoid any circular-wait deadlock?)
+            20 × correctness       (was the final shared counter correct?)
+            − efficiency_penalty   (0–20, proportional to wait + busy-wait ratio)
+
+        Correctness:
+            If the algorithm produces a final counter == expected counter,
+            correctness = 1.0 (full marks).  Otherwise it scales linearly.
+            For algorithms without an explicit counter (mutex, monitor, etc.),
+            correctness defaults to 1.0 if ME is satisfied.
         """
         if not results:
             return {"error": "No results to analyze"}
@@ -123,21 +197,21 @@ class AnalysisEngine:
             else:
                 correctness = 1.0 if mutual_exclusion else 0.4
 
-            # ── Score: computed entirely from simulation ───────────────────
-            # Mutual exclusion maintained            → 40 pts (binary)
-            # Deadlock free                          → 25 pts (binary)
+            # ── Score: computed from simulation — weights sum to 100 ──────
+            # Mutual exclusion maintained            → 50 pts (binary)
+            # Deadlock free                          → 30 pts (binary)
             # Counter correctness                    → 20 pts (continuous)
-            # Efficiency: penalty for wait+busy-wait → -15 pts max
+            # Efficiency: penalty for wait+busy-wait → up to -20 pts
+            # A perfectly correct, deadlock-free, zero-wait algorithm → 100/100.
             wait_ratio      = (wait_events + busy_wait_steps) / total
             busy_ratio      = busy_wait_steps / total
-            efficiency_pen  = min(15.0, wait_ratio * 20 + busy_ratio * 20)
+            efficiency_pen  = min(20.0, wait_ratio * 25 + busy_ratio * 15)
 
             score = round(
-                40.0 * (1.0 if mutual_exclusion else 0.0) +
-                25.0 * (1.0 if deadlock_free    else 0.0) +
+                50.0 * (1.0 if mutual_exclusion else 0.0) +
+                30.0 * (1.0 if deadlock_free    else 0.0) +
                 20.0 * correctness -
-                efficiency_pen +
-                (0.0 if race_detected else 0.0),   # already captured in ME
+                efficiency_pen,
                 1,
             )
             score = max(0.0, min(100.0, score))
@@ -374,7 +448,7 @@ class AnalysisEngine:
         return (
             f"For production systems, prefer **{best['name']}**-style approaches: "
             f"{best.get('use_case', 'monitor or mutex-based designs')}. "
-            f"Mutex-based synchronization performed best due to strict mutual exclusion "
-            f"and elimination of race conditions in shared resource access."
+            f"**{best['name']}** scored highest ({best.get('score', '—')}/100) "
+            f"due to {', '.join(best.get('strengths', ['strong mutual exclusion'])[:2]) or 'correctness and efficiency'}."
         )
 

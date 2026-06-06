@@ -19,59 +19,110 @@ const DiagnosticsViz = {
   },
 
   SHORT_WHY: {
-    race_condition:      "Concurrent read-modify-write — one process overwrites another's result.",
-    cs_violation:        "Two processes inside the critical section simultaneously.",
-    deadlock:            "Circular wait — each process holds what the other needs.",
-    starvation:          "One process waits far longer; scheduler keeps skipping it.",
-    livelock:            "Processes respond to each other endlessly but make no progress.",
-    producer_consumer:   "Buffer overflow/underflow — no semaphore guards empty/full slots.",
-    readers_writers:     "Writer modifies data while readers are actively reading it.",
-    dining_philosophers: "All grab one fork, all wait for the other — circular deadlock.",
-    sleeping_barber:     "Wakeup signals lost — barber sleeps while a customer is waiting.",
+    // ── Detectable from CPU scheduling traces ─────────────────────────────
+    race_condition:  "Concurrent read-modify-write — one process overwrites another's result (Silberschatz §6.1).",
+    cs_violation:    "Two processes inside the critical section simultaneously — mutual exclusion violated.",
+    deadlock:        "Circular wait: each process holds what the other needs (Silberschatz §8.3).",
+    starvation:      "Process waits far longer than peers — scheduler systematically bypasses it (Silberschatz §6.6).",
+    // ── Not detectable from scheduling traces — demonstrated in Phase 3 ──
+    livelock:          "Not detectable from scheduling trace (requires voluntary-yield retry code). See Phase 3.",
+    producer_consumer: "Not detectable from scheduling trace (requires explicit producer/consumer roles). See Phase 3.",
+    readers_writers:   "Not detectable from scheduling trace (requires explicit reader/writer roles). See Phase 3.",
+    dining_philosophers: "Not detectable from scheduling trace (requires ring-topology fork protocol). See Phase 3.",
+    sleeping_barber:   "Not detectable from scheduling trace (requires I/O service-queue semantics). See Phase 3.",
   },
 
   /* ════════════════════════════════════════════════════════════════════
-     PHASE 2 — Animated detection table (✓ / ✗ + one-line why)
+     PHASE 2 — Animated detection table, one block per algorithm
      ════════════════════════════════════════════════════════════════════ */
-  async renderDetection(diag) {
+
+  /**
+   * Render a separate detection block for every algorithm in diagResults.
+   * Each block shows ✓/✗ for every sync problem with an explanation
+   * tailored to whether the problem occurred or not under that schedule.
+   *
+   * @param {Object} diagResults  — { algoId: diagResponse, … }
+   * @param {string} primaryAlgo  — the primary algorithm from Phase 1
+   */
+  async renderDetectionMulti(diagResults, primaryAlgo) {
     const el = document.getElementById("detection-grid");
     if (!el) return;
+    el.innerHTML = "";
 
-    const problems  = diag.problems || [];
-    const syncProbs = problems.filter(p => p.category === "sync");
-    const nOcc      = syncProbs.filter(p => p.occurred).length;
-    const algo      = (diag.scheduler?.algorithm || "").toUpperCase().replace(/_/g, " ");
+    const delay   = Math.max(180, Playback.getStepDelay(Playback.getSpeedSlider()) / 5);
+    const entries = Object.entries(diagResults);
 
-    const summary = document.getElementById("detection-summary");
-    if (summary) summary.textContent = `${nOcc} / ${syncProbs.length} sync problems detected · ${algo}`;
+    for (const [algoId, diag] of entries) {
+      const problems  = diag.problems || [];
+      const syncProbs = problems.filter(p => p.category === "sync");
+      const nOcc      = syncProbs.filter(p => p.occurred).length;
+      const isPrimary = algoId === primaryAlgo;
+      const algoName  = algoId.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const safeId    = algoId.replace(/[^a-z0-9_]/gi, "_");
 
-    const delay = Math.max(180, Playback.getStepDelay(Playback.getSpeedSlider()) / 5);
+      // ── Build the block ─────────────────────────────────────────────
+      const block = document.createElement("div");
+      block.className = "dx-algo-block";
+      block.innerHTML = `
+        <div class="dx-algo-header">
+          <span class="dx-algo-label">${algoName}</span>
+          ${isPrimary ? '<span class="badge badge-warn">Primary</span>' : ""}
+          <span class="dx-algo-summary ${nOcc > 0 ? "bad" : "ok"}">
+            ${nOcc > 0 ? `⚠ ${nOcc} / ${syncProbs.length} problems exposed` : `✓ 0 / ${syncProbs.length} problems exposed`}
+          </span>
+        </div>
+        <table class="dx-table">
+          <thead>
+            <tr>
+              <th class="dx-th-name">Synchronization Problem</th>
+              <th class="dx-th-status">Status</th>
+              <th class="dx-th-why">Why it occurs / does not occur under this schedule</th>
+            </tr>
+          </thead>
+          <tbody id="dx-tbody-${safeId}"></tbody>
+        </table>`;
+      el.appendChild(block);
 
-    el.innerHTML = `
-      <table class="dx-table">
-        <thead>
-          <tr>
-            <th class="dx-th-name">Synchronization Problem</th>
-            <th class="dx-th-status">Status</th>
-            <th class="dx-th-why">Why</th>
-          </tr>
-        </thead>
-        <tbody id="dx-tbody-sync"></tbody>
-      </table>`;
+      // ── Animate rows one by one ──────────────────────────────────────
+      const tbody = document.getElementById(`dx-tbody-${safeId}`);
+      for (const p of syncProbs) {
+        await Playback.sleep(delay);
 
-    const syncTbody = document.getElementById("dx-tbody-sync");
+        // Occurring problems: use the short generic "why" label.
+        // Non-occurring problems: use the backend's specific explanation
+        // (e.g. "No race condition exposed under this schedule").
+        const why = p.occurred
+          ? (this.SHORT_WHY[p.id] || (p.explanation || "").slice(0, 120))
+          : ((p.explanation || this.SHORT_WHY[p.id] || "").slice(0, 120));
 
-    for (const p of syncProbs) {
-      await Playback.sleep(delay);
-      const why = this.SHORT_WHY[p.id] || (p.explanation || "").slice(0, 90);
-      const tr = document.createElement("tr");
-      tr.className = `dx-row ${p.occurred ? "dx-row-bad" : "dx-row-ok"} row-appear`;
-      tr.innerHTML = `
-        <td class="dx-prob-name">${p.name}</td>
-        <td class="dx-status-cell"><span class="${p.occurred ? "dx-cross" : "dx-tick"}">${p.occurred ? "✗" : "✓"}</span></td>
-        <td class="dx-why-cell">${why}</td>`;
-      syncTbody.appendChild(tr);
+        const tr = document.createElement("tr");
+        tr.className = `dx-row ${p.occurred ? "dx-row-bad" : "dx-row-ok"} row-appear`;
+        tr.innerHTML = `
+          <td class="dx-prob-name">${p.name}</td>
+          <td class="dx-status-cell">
+            <span class="${p.occurred ? "dx-cross" : "dx-tick"}">${p.occurred ? "✗" : "✓"}</span>
+          </td>
+          <td class="dx-why-cell">${why}</td>`;
+        tbody.appendChild(tr);
+      }
     }
+
+    // ── Update summary badge (use primary algo) ──────────────────────
+    const primaryDiag    = diagResults[primaryAlgo] || Object.values(diagResults)[0];
+    const primarySyncPr  = (primaryDiag?.problems || []).filter(p => p.category === "sync");
+    const primaryOcc     = primarySyncPr.filter(p => p.occurred).length;
+    const primaryName    = (primaryAlgo || "").toUpperCase().replace(/_/g, " ");
+    const summary        = document.getElementById("detection-summary");
+    if (summary) {
+      summary.textContent = entries.length > 1
+        ? `${primaryOcc}/${primarySyncPr.length} (${primaryName}) · ${entries.length} algorithms`
+        : `${primaryOcc} / ${primarySyncPr.length} sync problems · ${primaryName}`;
+    }
+  },
+
+  /** Single-algo wrapper kept for backward compatibility. */
+  async renderDetection(diag) {
+    await this.renderDetectionMulti({ [diag.scheduler?.algorithm || "primary"]: diag }, diag.scheduler?.algorithm);
   },
 
   /* ════════════════════════════════════════════════════════════════════
@@ -92,14 +143,16 @@ const DiagnosticsViz = {
   _renderBestBanner(best, occurred) {
     const el = document.getElementById("technique-best-banner");
     if (!el || !best) return;
-    const prevented = best.prevented.length;
+    const prevented = (best.prevented || []).length;           // ← null-safe
+    const overhead  = best.metrics?.overhead  ?? best.sim_metrics?.wait_events  ?? "—";
+    const fairness  = best.metrics?.fairness  ?? "—";
     el.innerHTML = `
       <div class="best-tech-icon">★</div>
       <div class="best-tech-body">
         <div class="best-tech-title">Best technique: ${best.name}</div>
         <div class="best-tech-sub">
           Score ${best.score}/100 · prevents ${prevented}/${occurred.length} detected problems ·
-          overhead ${best.metrics.overhead} ticks · fairness ${best.metrics.fairness}
+          overhead ${overhead} · fairness ${fairness}
         </div>
       </div>`;
   },
@@ -111,8 +164,8 @@ const DiagnosticsViz = {
   },
 
   _capOf(tech, problemId) {
-    if (tech.prevented.includes(problemId)) return "prevents";
-    if (tech.partial.includes(problemId)) return "partial";
+    if ((tech.prevented || []).includes(problemId)) return "prevents";   // ← null-safe
+    if ((tech.partial   || []).includes(problemId)) return "partial";    // ← null-safe
     return "no";
   },
 
@@ -260,13 +313,13 @@ const DiagnosticsViz = {
         datasets: [
           {
             label: "Overhead (ticks)",
-            data: techniques.map((t) => t.metrics.overhead),
+            data: techniques.map((t) => t.metrics?.overhead ?? 0),   // null-safe
             backgroundColor: "rgba(255,45,120,0.65)",
             borderRadius: 6,
           },
           {
             label: "Avg waiting",
-            data: techniques.map((t) => t.metrics.avg_waiting),
+            data: techniques.map((t) => t.metrics?.avg_waiting ?? 0), // null-safe
             backgroundColor: "rgba(0,212,212,0.65)",
             borderRadius: 6,
           },
@@ -324,14 +377,21 @@ const DiagnosticsViz = {
     const occurred = (diag.problems || []).filter((p) => p.occurred);
     const best = diag.best || {};
     const base = diag.base_metrics || {};
-    const bm = best.metrics || {};
+    // prefer sim_metrics (real simulation) over analytical metrics
+    const bm  = best.metrics     || {};
+    const bsm = best.sim_metrics || {};
 
     const problemList = occurred.length
       ? occurred.map((p) => `<li>${p.name} <span class="muted">(${p.severity})</span></li>`).join("")
       : "<li>None detected</li>";
     const preventedList = (best.prevented || []).length
-      ? best.prevented.map((id) => `<li>${(diag.problems.find((p) => p.id === id) || {}).name || id}</li>`).join("")
+      ? (best.prevented || []).map((id) => `<li>${(diag.problems.find((p) => p.id === id) || {}).name || id}</li>`).join("")
       : "<li>—</li>";
+
+    // Build "after" metric line — use simulation values when available
+    const afterMetrics = bsm.total_steps
+      ? `Steps: ${bsm.total_steps} · CS entries: ${bsm.cs_entries ?? "—"} · Wait events: ${bsm.wait_events ?? "—"} · Mutual exclusion: ${bsm.mutual_exclusion ? "✓" : "✗"}`
+      : `Avg WT ${bm.avg_waiting ?? "—"} · CPU ${bm.cpu_util ?? "—"}% · overhead ${bm.overhead ?? "—"}`;
 
     el.innerHTML = `
       <h4>Before vs After Synchronization</h4>
@@ -343,16 +403,14 @@ const DiagnosticsViz = {
           </p>
           <ul class="ba-list">${problemList}</ul>
           <div class="ba-metrics">
-            Avg WT ${base.avg_waiting} · CPU ${base.cpu_util}% · throughput ${base.throughput}
+            Avg WT ${base.avg_waiting ?? "—"} · CPU ${base.cpu_util ?? "—"}% · throughput ${base.throughput ?? "—"}
           </div>
         </div>
         <div class="ba-col ba-after">
           <div class="ba-title">With ${best.name || "best technique"}</div>
           <div class="ba-sub">Problems prevented by this technique:</div>
           <ul class="ba-list">${preventedList}</ul>
-          <div class="ba-metrics">
-            Avg WT ${bm.avg_waiting} · CPU ${bm.cpu_util}% · throughput ${bm.throughput} · overhead ${bm.overhead}
-          </div>
+          <div class="ba-metrics">${afterMetrics}</div>
         </div>
       </div>`;
   },

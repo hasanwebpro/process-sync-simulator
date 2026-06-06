@@ -63,6 +63,19 @@ const SyncInsights = {
     );
     const onCpu = steps.filter((s) => s.action === "cpu_dispatch").length;
 
+    // Mutual exclusion: check whether any two processes were ever BOTH
+    // in the critical_section at the same time (ME violation).
+    // A single-process CS entry is fine; concurrent entries are the violation.
+    const meViolation = steps.some(s => (s.critical_section || []).length > 1);
+    // Also honour the backend's explicit mutual_exclusion flag from the summary
+    // (e.g. race_condition demo explicitly sets mutual_exclusion: false).
+    const backendME = steps.length > 0
+      ? steps[steps.length - 1]?.shared_vars?.mutual_exclusion
+      : undefined;
+    const mutualExclusion = backendME !== undefined
+      ? Boolean(backendME)
+      : (!meViolation && csSteps.length > 0);
+
     return {
       algo: algoName,
       totalSteps: steps.length,
@@ -70,7 +83,7 @@ const SyncInsights = {
       csEntries: csSteps.length,
       blockEvents: blocked.length,
       cpuSlices: onCpu,
-      mutualExclusion: csSteps.length > 0 && blocked.length >= 0,
+      mutualExclusion,
     };
   },
 
@@ -111,12 +124,14 @@ const SyncInsights = {
   renderRunSummary(summary) {
     const el = document.getElementById("sync-run-summary");
     if (!el || !summary) return;
+    // Compact inline strip — lives inside the Live Execution card, no extra card height
     el.innerHTML = `
       <div class="summary-grid">
-        <div class="sum-card"><span>Algorithm</span><strong>${summary.algo}</strong></div>
-        <div class="sum-card"><span>Total steps</span><strong>${summary.totalSteps}</strong></div>
-        <div class="sum-card"><span>CS activity</span><strong>${summary.csEntries}</strong></div>
+        <div class="sum-card"><span>Algo</span><strong>${summary.algo}</strong></div>
+        <div class="sum-card"><span>Steps</span><strong>${summary.totalSteps}</strong></div>
+        <div class="sum-card"><span>CS entries</span><strong>${summary.csEntries}</strong></div>
         <div class="sum-card"><span>Wait events</span><strong>${summary.blockEvents}</strong></div>
+        <div class="sum-card"><span>CPU slices</span><strong>${summary.cpuSlices}</strong></div>
       </div>`;
   },
 };

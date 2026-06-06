@@ -27,19 +27,18 @@
       <span class="logo-icon pulse">⟳</span>
       <div>
         <h1>PROCESS SYNC SIMULATOR</h1>
-        <p>OS Lab · CPU Scheduling + Process Synchronization</p>
       </div>
     </div>
 
-    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
       <div class="mission-stepper" id="mission-stepper">
         <div class="step active" data-phase="1"><span>01</span> Scheduling</div>
         <div class="step-connector"></div>
         <div class="step locked" data-phase="2"><span>02</span> Problems</div>
         <div class="step-connector"></div>
-        <div class="step locked" data-phase="3"><span>03</span> Synchronization</div>
+        <div class="step locked" data-phase="3"><span>03</span> Sync</div>
         <div class="step-connector"></div>
-        <div class="step locked" data-phase="4"><span>04</span> Analysis</div>
+        <div class="step locked" data-phase="4"><span>04</span> Report</div>
       </div>
       <button class="btn-theme-toggle" id="btn-theme-toggle" title="Toggle dark / light mode">
         <span class="theme-icon" id="theme-icon">🌙</span>
@@ -81,24 +80,12 @@
       <button class="btn" id="btn-reset-mission">↺ Reset</button>
     </div>
 
+    <div class="status-strip">
+      <span id="footer-status">Ready</span>
+    </div>
+
   </div>
 
-  <!-- ===== WORKFLOW BANNER ===== -->
-  <div class="concept-banner">
-    <strong>Workflow:</strong>
-    Process Creation
-    → <strong>01</strong> CPU Scheduling
-    → <strong>02</strong> Shared Access Without Sync (Problems)
-    → <strong>03</strong> Synchronization Applied (Resolved)
-    → <strong>04</strong> Analysis &amp; Report
-    <span class="state-legend">
-      <i class="dot ready"></i>Ready
-      <i class="dot run"></i>Running
-      <i class="dot wait"></i>Waiting
-      <i class="dot block"></i>Blocked
-      <i class="dot term"></i>Terminated
-    </span>
-  </div>
 
   <!-- ===== MAIN ===== -->
   <main class="mission-main">
@@ -139,7 +126,7 @@
           </div>
 
           <button class="btn small" id="btn-add-process">+ Process</button>
-          <button class="btn small ghost" id="btn-load-demo">Demo data</button>
+          <button class="btn small ghost" id="btn-load-demo">⟳ Generate data</button>
 
           <div class="btn-row stacked">
             <button class="btn primary glow-btn" id="btn-phase1-run">▶ Run Scheduling</button>
@@ -361,19 +348,23 @@
                   <p class="explain-placeholder">Run the simulation to begin.</p>
                 </div>
 
-                <h4 class="mini-label" style="margin-top:0.75rem">CS Flow</h4>
+                <h4 class="mini-label">CS Flow</h4>
                 <div id="sync-flow-diagram"></div>
 
               </div>
             </div>
+
+            <!-- Stats strip — compact inline row inside the card -->
+            <div id="sync-run-summary"></div>
+
           </div>
 
-          <!-- Run Summary -->
-          <div id="sync-run-summary"></div>
-
-          <!-- Step Timeline -->
+          <!-- Step Timeline — immediately below, no gap div in between -->
           <div class="card hud-card glow-card sync-timeline-card">
-            <h3>Step Timeline <span class="subtitle">click any step to jump</span></h3>
+            <div class="card-header" style="margin-bottom:0.5rem">
+              <h3>Step Timeline</h3>
+              <span class="badge">click any step to jump</span>
+            </div>
             <div id="sync-timeline" class="timeline"></div>
           </div>
 
@@ -456,11 +447,6 @@
 
   </main>
 
-  <!-- ===== FOOTER ===== -->
-  <footer class="footer mission-footer">
-    <span>OS Lab Simulator</span>
-    <span id="footer-status">Ready</span>
-  </footer>
 
   <!-- ===== SCRIPTS ===== -->
   <script src="{{ url_for('static', filename='js/playback.js') }}"></script>

@@ -31,11 +31,12 @@ const API = {
   },
 };
 
-let schedAlgorithms = [];
-let syncAlgorithms  = [];
-let phase1Result    = null;   // /api/pipeline/phase1 — scheduling result
-let phase2Result    = null;   // /api/diagnostics/run — unsynchronized problem detection
-let missionRunning  = false;
+let schedAlgorithms  = [];
+let syncAlgorithms   = [];
+let phase1Result     = null;   // /api/pipeline/phase1 — scheduling result
+let phase2Result     = null;   // primary algorithm's diagnostics result
+let phase2AllResults = {};     // { algoId: diagResult } — all algorithms' results for Phase 3 context
+let missionRunning   = false;
 
 document.addEventListener("DOMContentLoaded", async () => {
   SchedulerViz.init();
@@ -204,16 +205,73 @@ function updateQuantumVisibility() {
   document.getElementById("quantum-wrap").classList.toggle("hidden", !needs);
 }
 
+/**
+ * Generate a random process table that produces visibly different scheduling
+ * outcomes each click.  The algorithm rotates through preset "scenario shapes"
+ * (e.g. burst-heavy, staggered arrivals, priority inversion) while randomising
+ * the exact numeric values so every run looks distinct.
+ */
 function loadDemoProcesses() {
   const container = document.getElementById("process-inputs");
   container.innerHTML = "";
-  [
-    { pid: "P1", arrival: 0, burst: 8, priority: 3 },
-    { pid: "P2", arrival: 0, burst: 3, priority: 1 },
-    { pid: "P3", arrival: 0, burst: 5, priority: 2 },
-    { pid: "P4", arrival: 2, burst: 2, priority: 4 },
-  ].forEach(p => addProcessRow(container, p.pid, p.arrival, p.burst, p.priority));
-  setFooter("Demo processes loaded.");
+
+  // Helper: random integer in [lo, hi]
+  const rnd = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1)) + lo;
+
+  // Pick one of six scenario shapes at random — each produces a noticeably
+  // different Gantt chart and set of detected problems.
+  const scenarios = [
+    // 1. Convoy effect: one very long job blocks several short ones (FCFS vs SJF contrast)
+    () => [
+      { pid: "P1", arrival: 0,  burst: rnd(8, 14), priority: rnd(3, 5) },
+      { pid: "P2", arrival: 1,  burst: rnd(1, 3),  priority: rnd(1, 2) },
+      { pid: "P3", arrival: 2,  burst: rnd(2, 4),  priority: rnd(1, 3) },
+      { pid: "P4", arrival: 3,  burst: rnd(1, 3),  priority: rnd(2, 4) },
+    ],
+    // 2. Staggered arrivals: processes trickle in — highlights IDLE gaps
+    () => [
+      { pid: "P1", arrival: 0,  burst: rnd(3, 6),  priority: rnd(2, 4) },
+      { pid: "P2", arrival: rnd(4, 7),  burst: rnd(4, 8),  priority: rnd(1, 3) },
+      { pid: "P3", arrival: rnd(8, 12), burst: rnd(2, 5),  priority: rnd(3, 5) },
+      { pid: "P4", arrival: rnd(13,17), burst: rnd(3, 6),  priority: rnd(1, 4) },
+    ],
+    // 3. Equal bursts: fairness test — RR and FCFS produce similar AWT
+    () => {
+      const b = rnd(4, 7);
+      return [
+        { pid: "P1", arrival: 0, burst: b,         priority: rnd(1, 4) },
+        { pid: "P2", arrival: 1, burst: b,         priority: rnd(1, 4) },
+        { pid: "P3", arrival: 2, burst: b,         priority: rnd(1, 4) },
+        { pid: "P4", arrival: 3, burst: b,         priority: rnd(1, 4) },
+      ];
+    },
+    // 4. Priority inversion: high-priority job arrives late — shows priority vs FCFS gap
+    () => [
+      { pid: "P1", arrival: 0,         burst: rnd(6, 10), priority: 4 },
+      { pid: "P2", arrival: 1,         burst: rnd(4, 7),  priority: 3 },
+      { pid: "P3", arrival: rnd(3, 6), burst: rnd(2, 4),  priority: 1 },
+      { pid: "P4", arrival: rnd(5, 8), burst: rnd(3, 6),  priority: 2 },
+    ],
+    // 5. Five processes — more context switches under RR, richer Gantt
+    () => [
+      { pid: "P1", arrival: 0,         burst: rnd(4, 8),  priority: rnd(2, 5) },
+      { pid: "P2", arrival: rnd(1, 3), burst: rnd(2, 6),  priority: rnd(1, 4) },
+      { pid: "P3", arrival: rnd(2, 5), burst: rnd(5, 10), priority: rnd(1, 3) },
+      { pid: "P4", arrival: rnd(3, 6), burst: rnd(1, 4),  priority: rnd(2, 5) },
+      { pid: "P5", arrival: rnd(4, 7), burst: rnd(3, 7),  priority: rnd(1, 4) },
+    ],
+    // 6. Short vs long: bimodal — SJF/SRTF give a very different order than FCFS
+    () => [
+      { pid: "P1", arrival: 0, burst: rnd(1, 3),  priority: rnd(3, 5) },
+      { pid: "P2", arrival: 0, burst: rnd(9, 15), priority: rnd(1, 2) },
+      { pid: "P3", arrival: 1, burst: rnd(1, 3),  priority: rnd(2, 4) },
+      { pid: "P4", arrival: 2, burst: rnd(8, 12), priority: rnd(3, 5) },
+    ],
+  ];
+
+  const chosen = scenarios[rnd(0, scenarios.length - 1)]();
+  chosen.forEach(p => addProcessRow(container, p.pid, p.arrival, p.burst, p.priority));
+  setFooter("Random processes generated — run scheduling to see the outcome.");
 }
 
 function renderProcessInputs() { loadDemoProcesses(); }
@@ -304,29 +362,55 @@ function renderPhase3ProblemContext() {
     return;
   }
 
-  const all      = phase2Result.problems || [];
-  const occurred = all.filter(p => p.occurred);
+  // Collect all problems that occurred across ANY algorithm run in Phase 2.
+  // These are the only ones Phase 3 needs to address.
+  const allAlgoEntries = Object.entries(phase2AllResults);
 
-  if (!occurred.length) {
-    el.innerHTML = `<p class="hint" style="color:var(--hud-green)">
-      No synchronization problems were detected — synchronization is still a best
-      practice to guarantee correctness under any schedule.
-    </p>`;
-    return;
-  }
+  // Gather union of occurred problem IDs across all algorithms
+  const occurredIds = new Set();
+  allAlgoEntries.forEach(([, diag]) => {
+    (diag.problems || []).filter(p => p.occurred).forEach(p => occurredIds.add(p.id));
+  });
 
-  el.innerHTML = `
-    <p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.5rem">
-      Phase 2 exposed <strong style="color:var(--hud-pink)">${occurred.length}</strong>
-      problem(s). Use the mechanisms below to resolve them:
-    </p>
-    <div class="detected-prob-chips">
-      ${all.map(p =>
-        `<span class="prob-chip ${p.occurred ? "prob-occurred" : "prob-safe"}">
-          ${p.occurred ? "●" : "○"}&nbsp;${p.name}
-         </span>`
-      ).join("")}
-    </div>`;
+  // ── Per-algorithm breakdown rows ─────────────────────────────────────────
+  const algoRows = allAlgoEntries.map(([algoId, diag]) => {
+    const probs    = (diag.problems || []).filter(p => p.category === "sync");
+    const occurred = probs.filter(p => p.occurred);
+    const isPrimary = algoId === phase1Result?.primary_algorithm;
+    const label    = formatAlgoName(algoId) + (isPrimary ? " ★" : "");
+
+    if (!occurred.length) {
+      return `
+        <div class="p3-algo-row p3-row-clean">
+          <span class="p3-algo-name">${label}</span>
+          <span class="p3-row-status ok">✓ No problems detected</span>
+        </div>`;
+    }
+
+    const chips = occurred.map(p =>
+      `<span class="prob-chip prob-occurred" title="${p.explanation || p.name}">● ${p.name}</span>`
+    ).join("");
+
+    return `
+      <div class="p3-algo-row p3-row-problems">
+        <span class="p3-algo-name">${label}</span>
+        <div class="p3-row-chips">${chips}</div>
+      </div>`;
+  }).join("");
+
+  // ── Summary line ──────────────────────────────────────────────────────────
+  const totalOccurred = occurredIds.size;
+  const summaryHtml = totalOccurred === 0
+    ? `<p class="hint" style="color:var(--hud-green);margin-bottom:0.5rem">
+         ✓ No synchronization problems were detected under any selected algorithm.
+         Synchronization is still recommended as best practice.
+       </p>`
+    : `<p style="font-size:0.78rem;color:var(--muted);margin-bottom:0.55rem">
+         <strong style="color:var(--hud-pink)">${totalOccurred}</strong> unique
+         problem(s) exposed — apply synchronization mechanisms below to resolve them.
+       </p>`;
+
+  el.innerHTML = summaryHtml + `<div class="p3-algo-breakdown">${algoRows}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,52 +621,60 @@ async function runPhase2() {
 
   const btn = document.getElementById("btn-phase2-run");
   btn.disabled = true;
-  setFooter("Replaying workload without synchronization — detecting problems…");
 
-  // Use the SAME processes and the primary scheduling algorithm from Phase 1
-  const diag = await API.post("/api/diagnostics/run", {
-    processes:       phase1Result.processes,
-    sched_algorithm: phase1Result.primary_algorithm,
-    quantum:         getQuantum(),
-  });
-  btn.disabled = false;
-
-  if (!diag.success) {
-    setFooter(`⚠ ${diag.error || "Detection failed."}`);
-    return;
-  }
-
-  phase2Result = diag;
-
-  // Run diagnostics for ALL selected algorithms in parallel
-  const allAlgos   = phase1Result.sched_algorithms || [phase1Result.primary_algorithm];
-  const diagResults = { [phase1Result.primary_algorithm]: diag };
-
-  await Promise.all(
-    allAlgos
-      .filter(a => a !== phase1Result.primary_algorithm)
-      .map(async (algo) => {
-        const r = await API.post("/api/diagnostics/run", {
-          processes:       phase1Result.processes,
-          sched_algorithm: algo,
-          quantum:         getQuantum(),
-        });
-        if (r.success) diagResults[algo] = r;
-      })
+  // Use ONLY the algorithms that were actually selected and run in Phase 1.
+  // Phase 2 replays the same workload under each of those schedules to show
+  // how the different interleavings expose different synchronization problems.
+  const selectedAlgos = phase1Result.sched_algorithms || [phase1Result.primary_algorithm];
+  setFooter(
+    `Detecting problems under ${selectedAlgos.map(formatAlgoName).join(", ")}…`
   );
 
-  // Timeline-row simulation for each algorithm
+  const diagResults = {};
+
+  await Promise.all(
+    selectedAlgos.map(async (algo) => {
+      const r = await API.post("/api/diagnostics/run", {
+        processes:       phase1Result.processes,
+        sched_algorithm: algo,
+        quantum:         getQuantum(),
+      });
+      if (r.success) {
+        diagResults[algo] = r;
+      } else {
+        console.warn(`Phase 2: diagnostics failed for ${algo}:`, r.error);
+      }
+    })
+  );
+
+  btn.disabled = false;
+
+  // The primary algorithm's result drives Phase 3 and Phase 4.
+  // Fall back to any available result if the primary somehow failed.
+  const primaryDiag =
+    diagResults[phase1Result.primary_algorithm] ||
+    Object.values(diagResults)[0];
+
+  if (!primaryDiag) {
+    setFooter("⚠ Problem detection failed for all algorithms. Try running Phase 1 again.");
+    return;
+  }
+  phase2Result     = primaryDiag;
+  phase2AllResults = diagResults;   // expose to Phase 3 context banner
+
+  // Timeline-row canvas — one animated block per algorithm that succeeded
   await Phase2Viz.renderAll(diagResults, phase1Result.primary_algorithm, phase1Result.processes);
 
-  // Animate problems table (primary algo)
-  await DiagnosticsViz.renderDetection(diag);
+  // Problems table — one block per algorithm so students can compare
+  await DiagnosticsViz.renderDetectionMulti(diagResults, phase1Result.primary_algorithm);
 
-  const nOcc = diag.problems_occurred.length;
+  const nOcc    = phase2Result.problems_occurred.length;
+  const nAlgos  = Object.keys(diagResults).length;
   document.getElementById("proceed-phase3").style.display = "";
   setFooter(
-    `${nOcc} synchronization problem(s) exposed under ` +
-    `${formatAlgoName(phase1Result.primary_algorithm)} without synchronization. ` +
-    `Proceed to Phase 3 to apply synchronization mechanisms.`
+    `${nOcc} problem(s) exposed under ${formatAlgoName(phase1Result.primary_algorithm)}` +
+    (nAlgos > 1 ? ` · ${nAlgos} algorithms compared` : "") +
+    ` · Proceed to Phase 3.`
   );
 
   if (!missionRunning && document.getElementById("auto-advance").checked) {
@@ -664,9 +756,16 @@ async function simulateSync() {
     SyncViz.startPlay();
   }
 
+  // Allow proceeding to Phase 4 once a simulation has run — Phase 4 can use
+  // phase2Result data even without the full technique comparison.
+  if (phase2Result) {
+    document.getElementById("proceed-phase4").style.display = "";
+  }
+
   setFooter(
     `${formatAlgoName(algoId)}: ${steps.length} step(s) on your actual processes. ` +
-    `Use the playback controls to step through how the critical section is protected.`
+    `Use playback controls to step through the critical section, ` +
+    `then click Compare All Techniques for full scoring or proceed to Report.`
   );
 }
 
@@ -683,10 +782,28 @@ async function runPhase3Compare() {
     if (!phase2Result) return;
   }
 
-  const COMPARE_TECHNIQUES = ["mutex", "binary_semaphore", "counting_semaphore",
-                               "monitor", "peterson", "dekker"];
+  // Only include real synchronization SOLUTIONS in the technique comparison.
+  // race_condition and deadlock_demo are demonstration scenarios (absence of sync),
+  // not solutions — including them in a technique comparison is academically incorrect.
+  const COMPARE_TECHNIQUES = [
+    "mutex", "binary_semaphore", "counting_semaphore",
+    "monitor", "peterson", "dekker",
+  ];
 
-  setFooter("Running all synchronization techniques on your actual processes…");
+  // Collect the union of problems that actually occurred across all Phase 2 runs.
+  // Only algorithms that HAD problems need their issues resolved in Phase 3.
+  const allAlgoEntries = Object.entries(phase2AllResults);
+  const algosSummary   = allAlgoEntries.map(([id, diag]) => {
+    const occ = (diag.problems || []).filter(p => p.occurred && p.category === "sync");
+    return { id, name: formatAlgoName(id), count: occ.length };
+  });
+  const algosWithProbs  = algosSummary.filter(a => a.count > 0).map(a => a.name);
+  const algosClean      = algosSummary.filter(a => a.count === 0).map(a => a.name);
+  const summaryLine     =
+    (algosWithProbs.length ? `⚠ Problems found under: ${algosWithProbs.join(", ")}. ` : "") +
+    (algosClean.length     ? `✓ No problems under: ${algosClean.join(", ")}. ` : "");
+
+  setFooter(summaryLine + "Running synchronization techniques…");
 
   // Run all techniques through the real pipeline in parallel
   const pipelineResults = await Promise.all(
@@ -701,23 +818,31 @@ async function runPhase3Compare() {
   );
 
   // Build an enriched comparison by merging real simulation metrics
-  // with the prevention data already computed by the diagnostics engine
+  // with the prevention data already computed by the diagnostics engine.
+  // Use phase2Result (primary algorithm) for diagTechMap — this correctly
+  // reflects the capability of each technique against the primary schedule's problems.
   const diagTechMap = {};
   (phase2Result.techniques || []).forEach(t => { diagTechMap[t.technique] = t; });
 
   const enriched = pipelineResults
     .filter(Boolean)
     .map(({ algo, data }) => {
-      const simComp   = data.sync_comparison || {};
-      const ranking   = (simComp.rankings || []).find(r => r.algorithm === algo) || {};
-      const diagTech  = diagTechMap[algo] || {};
-      const metrics   = ranking.metrics || {};
+      const simComp  = data.sync_comparison || {};
+      const ranking  = (simComp.rankings || []).find(r => r.algorithm === algo) || {};
+      const diagTech = diagTechMap[algo] || {};
+      const metrics  = ranking.metrics || {};
 
       return {
         ...diagTech,
-        technique:   algo,
-        name:        ranking.name || diagTech.name || formatAlgoName(algo),
-        score:       ranking.score ?? diagTech.score ?? 0,
+        technique:        algo,
+        name:             ranking.name      || diagTech.name      || formatAlgoName(algo),
+        score:            ranking.score     ?? diagTech.score     ?? 0,
+        // ── always guarantee these arrays exist so renderComparison never crashes ──
+        prevented:        diagTech.prevented        || [],
+        partial:          diagTech.partial          || [],
+        not_prevented:    diagTech.not_prevented    || [],
+        prevention_ratio: diagTech.prevention_ratio ?? 0,
+        // ── real simulation metrics from AnalysisEngine.analyze_sync ──
         sim_metrics: {
           total_steps:      metrics.total_steps      ?? "—",
           cs_entries:       metrics.cs_entries       ?? "—",
@@ -725,6 +850,7 @@ async function runPhase3Compare() {
           busy_wait_steps:  metrics.busy_wait_steps  ?? "—",
           mutual_exclusion: metrics.mutual_exclusion ?? true,
           deadlock_free:    metrics.deadlock_free     ?? true,
+          correctness:      metrics.correctness       ?? "—",
         },
         strengths:  ranking.strengths  || diagTech.strengths  || [],
         weaknesses: ranking.weaknesses || diagTech.weaknesses || [],
@@ -732,13 +858,17 @@ async function runPhase3Compare() {
     })
     .sort((a, b) => b.score - a.score);
 
-  // Patch phase2Result with real scores for the comparison render
-  const enrichedPhase2 = {
-    ...phase2Result,
-    techniques: enriched,
-    best: enriched[0] || phase2Result.best,
-  };
+  // Merge enriched techniques + best back into phase2Result so Phase 4
+  // uses the simulation-based scores, not just the diagnostic estimates.
+  if (enriched.length > 0) {
+    phase2Result = {
+      ...phase2Result,
+      techniques: enriched,
+      best: enriched[0],
+    };
+  }
 
+  const enrichedPhase2 = phase2Result;   // same object — both Phase 3 render and Phase 4 now share it
   DiagnosticsViz.renderComparison(enrichedPhase2);
 
   document.getElementById("comparison-section").style.display = "";
@@ -747,9 +877,9 @@ async function runPhase3Compare() {
 
   const best = enriched[0];
   setFooter(
-    `All ${enriched.length} techniques simulated on your actual processes. ` +
-    `Best = ${best?.name || "—"} (score ${best?.score ?? "—"}/100). ` +
-    `Proceed to Phase 4 for the full report.`
+    summaryLine +
+    `${enriched.length} techniques compared. Best = ${best?.name || "—"} ` +
+    `(score ${best?.score ?? "—"}/100). Proceed to Phase 4 for the full report.`
   );
 
   if (!missionRunning && document.getElementById("auto-advance").checked) {
@@ -880,8 +1010,9 @@ async function runFullMission() {
 
 function resetMission() {
   missionRunning = false;
-  phase1Result   = null;
-  phase2Result   = null;
+  phase1Result     = null;
+  phase2Result     = null;
+  phase2AllResults = {};
 
   Phase1Tutor.stop();
   SyncViz.stopPlay();

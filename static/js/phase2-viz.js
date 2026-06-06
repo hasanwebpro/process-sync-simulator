@@ -241,11 +241,11 @@ const Phase2Viz = {
   },
 
   // ── canvas constants ──────────────────────────────────────────────────────
-  LABEL_W:    58,
-  STATUS_W:   88,
-  ROW_H:      48,
-  HEADER_H:   32,
-  COUNTER_H:  36,
+  LABEL_W:    72,
+  STATUS_W:   108,
+  ROW_H:      72,
+  HEADER_H:   44,
+  COUNTER_H:  56,
 
   CELL_COLORS: {
     cs:         "rgba(245,158,11,0.80)",
@@ -292,9 +292,9 @@ const Phase2Viz = {
 
       // PID label
       ctx.fillStyle = "#EEE0FF";
-      ctx.font      = "bold 13px JetBrains Mono";
+      ctx.font      = "bold 16px JetBrains Mono";
       ctx.textAlign = "right";
-      ctx.fillText(pid, LABEL_W - 10, rowY + ROW_H / 2 + 5);
+      ctx.fillText(pid, LABEL_W - 10, rowY + ROW_H / 2 + 6);
 
       // Cells
       for (let t = 0; t < upToTick && t < maxEnd; t++) {
@@ -314,12 +314,12 @@ const Phase2Viz = {
         ctx.shadowBlur  = 0;
 
         // Label inside cell
-        if (CELL_W > 20) {
-          ctx.fillStyle = "rgba(255,255,255,0.92)";
-          ctx.font      = `bold ${Math.min(9, CELL_W - 4)}px JetBrains Mono`;
+        if (CELL_W > 18) {
+          ctx.fillStyle = "rgba(255,255,255,0.95)";
+          ctx.font      = `bold ${Math.min(13, CELL_W - 4)}px JetBrains Mono`;
           ctx.textAlign = "center";
           const cx = x + w / 2;
-          const cy = y + h / 2 + 4;
+          const cy = y + h / 2 + 5;
           if (state === "conflict") ctx.fillText("RACE", cx, cy);
           else if (state === "cs")   ctx.fillText("CS", cx, cy);
           else if (state === "write_ok" || state === "write_lost") {
@@ -373,9 +373,9 @@ const Phase2Viz = {
     ctx.fillRect(LABEL_W, cY, maxEnd * CELL_W, COUNTER_H - 6);
 
     ctx.fillStyle = "#9070B0";
-    ctx.font      = "bold 9px JetBrains Mono";
+    ctx.font      = "bold 12px JetBrains Mono";
     ctx.textAlign = "right";
-    ctx.fillText("Shared X", LABEL_W - 10, cY + 18);
+    ctx.fillText("Shared X", LABEL_W - 10, cY + 20);
 
     for (let t = 0; t < upToTick && t < maxEnd; t++) {
       const we = writeEvents[t];

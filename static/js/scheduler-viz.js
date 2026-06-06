@@ -32,7 +32,7 @@ const SchedulerViz = {
   registerCanvas(algoId, canvas, legendEl) {
     const wrap = canvas.parentElement;
     canvas.width  = wrap ? Math.max(wrap.clientWidth - 2, 320) : 600;
-    canvas.height = 160;
+    canvas.height = 240;
     this._canvases[algoId] = { canvas, legendEl, lastTimeline: null };
   },
 
@@ -40,10 +40,10 @@ const SchedulerViz = {
     const ctx = canvas?.getContext("2d");
     if (!ctx || !canvas || !timeline?.length) return;
 
-    const padding = { left: 44, right: 16, top: 28, bottom: 36 };
+    const padding = { left: 52, right: 16, top: 32, bottom: 44 };
     const maxEnd  = Math.max(...timeline.map((t) => t.end), 1);
     const chartW  = canvas.width - padding.left - padding.right;
-    const barH    = 48;
+    const barH    = 80;
     const y       = padding.top;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -79,15 +79,15 @@ const SchedulerViz = {
 
       if (w > 28 && seg.pid !== "IDLE") {
         ctx.fillStyle  = "#0C0018";
-        ctx.font       = "bold 12px JetBrains Mono";
+        ctx.font       = "bold 15px JetBrains Mono";
         ctx.textAlign  = "center";
-        ctx.fillText(seg.pid, x + w / 2, y + barH / 2 + 4);
+        ctx.fillText(seg.pid, x + w / 2, y + barH / 2 + 5);
       }
       if (seg.pid === "IDLE" && w > 20) {
         ctx.fillStyle = "#6040A0";
-        ctx.font      = "10px JetBrains Mono";
+        ctx.font      = "12px JetBrains Mono";
         ctx.textAlign = "center";
-        ctx.fillText("IDLE", x + w / 2, y + barH / 2 + 4);
+        ctx.fillText("IDLE", x + w / 2, y + barH / 2 + 5);
       }
     });
 

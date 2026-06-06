@@ -1,27 +1,55 @@
 """
-Diagnostics engine — shows which synchronization problems arise from concurrent
-unsynchronized access, and how each synchronization technique resolves them.
+diagnostics.py — Phase 2: Unsynchronized Problem Detection + Technique Evaluation
+====================================================================================
 
-Design (OS-rigorous, single CPU):
-    Scheduling itself does NOT directly create synchronization problems.
-    It determines which process runs next and controls preemption points.
-    Synchronization problems arise because processes share resources WITHOUT
-    proper synchronization — scheduling only exposes them by interleaving:
+Purpose
+-------
+Replays the CPU scheduling trace from Phase 1 against a SHARED RESOURCE with
+NO synchronization, then measures which classical OS synchronization problems
+become observable.  The same workload is then analysed with each synchronization
+technique to quantify how well each one resolves the detected problems.
 
-      * FCFS / non-preemptive  -> contiguous execution -> few interleaving
-                                  opportunities -> problems less likely to surface
-      * Round Robin / SRTF     -> frequent preemption -> processes interleave
-                                  mid critical-section -> problems surface clearly
+Methodological principle (Silberschatz §6.1)
+--------------------------------------------
+The CPU scheduler is the INDEPENDENT VARIABLE.
+Synchronization problems are the DEPENDENT VARIABLE.
 
-    Race condition: concurrent read-modify-write without synchronization;
-    final result depends on timing.
-    Critical section violation: more than one process inside the critical
-    section at the same time.
-    Deadlock: circular wait — each process holds a resource the other needs.
-    Starvation: a process is indefinitely delayed by the scheduler.
+    Scheduling → determines execution interleaving
+    Interleaving → determines which shared-access problems surface
 
-    We replay a shared-resource workload over the Gantt trace without any
-    synchronization to surface these problems, then evaluate each technique.
+Non-preemptive (FCFS, SJF, Priority):
+    Each process runs contiguously.  No other process accesses the shared
+    resource while one is running → few or no race conditions / CS violations.
+
+Preemptive (Round Robin, SRTF):
+    Frequent context switches interleave process execution windows.
+    Multiple processes can be mid-read-modify-write simultaneously →
+    race conditions, CS violations, deadlock surface clearly.
+
+What CAN be detected from a scheduling trace
+--------------------------------------------
+    Race condition     — overlapping read-modify-write windows (model approximation)
+    CS violation       — same as above; "what if no lock existed"
+    Deadlock           — hold-and-wait on two resources for the first two processes
+    Starvation         — a process waits far longer than its peers
+
+What CANNOT be detected from a generic scheduling trace
+-------------------------------------------------------
+    Livelock           — requires voluntary-yield retry code (no such code exists in scheduler)
+    Producer-Consumer  — requires explicit producer/consumer role designation
+    Readers-Writers    — requires explicit reader/writer role designation
+    Dining Philosophers— requires ring-topology fork-acquisition protocol
+    Sleeping Barber    — models I/O service queues, not CPU scheduling
+
+The five non-detectable problems are correctly demonstrated in Phase 3 via
+dedicated synchronization simulations.
+
+Technique evaluation
+--------------------
+After detection, each synchronization technique is evaluated against the
+detected problems using the _capability() function (textbook-grounded
+capability matrix) and a performance model (overhead, waiting time, fairness).
+Techniques are scored 0-100 and ranked.
 """
 
 from __future__ import annotations
@@ -36,17 +64,26 @@ from .scheduler import CPUScheduler
 # ─────────────────────────────────────────────────────────────────────────────
 
 PROBLEM_META: dict[str, dict[str, str]] = {
-    # Synchronization problems — directly caused by missing synchronization
-    "race_condition":      {"name": "Race Condition",             "category": "sync"},
-    "cs_violation":        {"name": "Critical Section Violation", "category": "sync"},
-    "livelock":            {"name": "Livelock",                   "category": "sync"},
-    "producer_consumer":   {"name": "Producer–Consumer",          "category": "sync"},
-    "readers_writers":     {"name": "Readers–Writers Conflict",   "category": "sync"},
-    "dining_philosophers": {"name": "Dining Philosophers",        "category": "sync"},
-    "sleeping_barber":     {"name": "Sleeping Barber",            "category": "sync"},
-    # Scheduling problems — caused by CPU scheduling policy, separate from sync
-    "deadlock":            {"name": "Deadlock",                   "category": "scheduling"},
-    "starvation":          {"name": "Starvation",                 "category": "scheduling"},
+    # ── Detectable from CPU scheduling traces ─────────────────────────────────
+    # Race condition and CS violation: derived from interleaving of execution
+    # windows; directionally correct — preemptive schedules expose more overlap.
+    "race_condition": {"name": "Race Condition",             "category": "sync"},
+    "cs_violation":   {"name": "Critical Section Violation", "category": "sync"},
+    # Deadlock: hold-and-wait on 2 resources modelled over the first 2 processes
+    # (Silberschatz §8.3 — circular wait). Category is sync, not scheduling.
+    "deadlock":       {"name": "Deadlock",                   "category": "sync"},
+    # Starvation: process waits far longer than peers — computed from real WT
+    # values produced by the scheduler (Silberschatz §6.6).
+    "starvation":     {"name": "Starvation",                 "category": "sync"},
+    # ── Not detectable from generic scheduling traces ─────────────────────────
+    # These problems require explicit role assignment (producer/consumer,
+    # reader/writer) or specific resource-topology information that a generic
+    # CPU scheduling trace does not provide. They are demonstrated in Phase 3.
+    "livelock":            {"name": "Livelock",                  "category": "sync"},
+    "producer_consumer":   {"name": "Producer–Consumer",         "category": "sync"},
+    "readers_writers":     {"name": "Readers–Writers Conflict",  "category": "sync"},
+    "dining_philosophers": {"name": "Dining Philosophers",       "category": "sync"},
+    "sleeping_barber":     {"name": "Sleeping Barber",           "category": "sync"},
 }
 
 
@@ -93,6 +130,13 @@ TECHNIQUE_META: dict[str, dict[str, Any]] = {
         "structured": False, "signaling": False, "two_proc_only": True,
         "cpu_efficiency": 0.60, "fairness": 0.80,
     },
+    "dekker": {
+        "name": "Dekker's Algorithm",
+        "desc": "First software ME solution; turn-based, two processes only.",
+        "ovh": 3, "blocks": False, "busy_wait": True, "concurrency": 1,
+        "structured": False, "signaling": False, "two_proc_only": True,
+        "cpu_efficiency": 0.58, "fairness": 0.78,
+    },
     "spinlock": {
         "name": "Spinlock",
         "desc": "Busy-wait lock; no queue, burns CPU under contention.",
@@ -116,14 +160,22 @@ def _capability(technique: str, problem: str, n_processes: int) -> str:
     """
     Return 'prevents' | 'partial' | 'no' for a (technique, problem) pair.
 
-    Grounded in OS theory:
-      * Mutual exclusion (race / CS violation) — any real lock prevents it,
-        but Peterson is limited to two processes.
-      * Deadlock / starvation — need a fair queue and/or ordering discipline;
-        busy-wait primitives (spinlock, Peterson) fall short.
-      * Ordering problems (producer-consumer, readers-writers, dining, barber)
-        — need signalling / counting; a bare mutex only partially helps and
-        busy-wait primitives cannot express condition waiting.
+    All mappings are grounded in Silberschatz "Operating System Concepts" 10th ed.
+    and Tanenbaum "Modern Operating Systems" 4th ed.
+
+    Key corrections vs. naive mappings:
+      * Deadlock — NO primitive prevents deadlock automatically. Monitor/CV
+        provide the tools but require programmer discipline (Silberschatz §6.7,
+        Lister 1977 nested-monitor deadlock). All are at best "partial".
+      * Starvation — standard POSIX mutex/semaphore do NOT guarantee FIFO
+        wake-up ordering (Silberschatz §6.5.2). Only structured primitives
+        (monitor, condition_variable) with explicit FIFO condition queues
+        provide bounded waiting.
+      * Dining Philosophers — a bare mutex on each fork is the TEXTBOOK EXAMPLE
+        of how deadlock arises (Silberschatz §7.1.3). Mutex alone is "partial"
+        (provides mutual exclusion on forks, but does not prevent circular wait).
+      * Livelock — blocking primitives avoid voluntary-yield loops ("partial"),
+        but livelock cannot occur in a single-CPU sequential model at all.
     """
     t = TECHNIQUE_META[technique]
     blocks   = t["blocks"]
@@ -131,55 +183,77 @@ def _capability(technique: str, problem: str, n_processes: int) -> str:
     counting = t["concurrency"] > 1
     two_only = t["two_proc_only"]
     busy     = t["busy_wait"]
+    structured = t["structured"]
 
-    # Mutual-exclusion problems
+    # ── Mutual-exclusion problems ─────────────────────────────────────────────
     if problem in ("race_condition", "cs_violation"):
         if two_only and n_processes > 2:
-            return "no"          # Peterson can't scale past 2 processes
-        return "prevents"        # every lock enforces mutual exclusion
+            return "no"      # Peterson/Dekker: limited to 2 processes
+        return "prevents"    # every correct lock enforces ME (Silberschatz §6.1)
 
+    # ── Deadlock ──────────────────────────────────────────────────────────────
+    # No primitive prevents deadlock automatically (Silberschatz §8.1).
+    # Monitors/CV provide tools for correct ordering, but programmer must apply
+    # them — deadlock is still possible with incorrect monitor usage (Lister 1977).
+    # Busy-wait primitives (spinlock, Peterson) offer no deadlock avoidance.
     if problem == "deadlock":
-        if technique in ("monitor", "condition_variable"):
-            return "prevents"    # structured encapsulation enforces ordering discipline
-        if technique in ("mutex", "counting_semaphore"):
-            # A mutex/semaphore alone does NOT prevent deadlock — two mutexes
-            # acquired in opposite order by two threads still deadlock (ABBA
-            # pattern). Prevention requires ordered acquisition enforced by the
-            # programmer, not by the primitive itself.
-            return "partial"
-        if technique == "binary_semaphore":
-            return "partial"     # same reasoning — discipline required
-        return "no"              # spinlock / Peterson don't address 2-resource wait
+        if structured:          # monitor / condition_variable
+            return "partial"    # best tools, but no automatic guarantee
+        if blocks and not busy:
+            return "partial"    # mutex / semaphore: discipline required (ABBA pattern)
+        return "no"             # spinlock / Peterson: no resource-ordering support
 
+    # ── Starvation ────────────────────────────────────────────────────────────
+    # Standard POSIX mutex/semaphore wake-up order is implementation-defined
+    # (Silberschatz §6.5.2). Only structured CV-based primitives with FIFO
+    # condition queues provide formal bounded-waiting guarantees.
     if problem == "starvation":
         if busy and not blocks:
-            return "no"          # no fair wait queue -> can starve
+            return "no"          # spinlock/Peterson: no fair queue
         if two_only and n_processes > 2:
             return "no"
-        return "prevents"        # FIFO blocking queue bounds waiting
+        if structured:
+            return "prevents"    # monitor/CV: explicit FIFO condition queue
+        return "partial"         # mutex/semaphore: depends on implementation
 
+    # ── Livelock ─────────────────────────────────────────────────────────────
+    # Livelock requires voluntary-yield retry loops; blocking primitives break
+    # those loops (process blocks instead of retrying). Non-blocking busy-wait
+    # primitives can participate in livelock retry loops.
     if problem == "livelock":
-        return "prevents" if blocks else "no"   # blocking avoids symmetric retry
+        if blocks:
+            return "prevents"    # blocking replaces retry with sleep
+        return "no"              # busy-wait can fuel retry loops
 
+    # ── Producer–Consumer (bounded buffer) ────────────────────────────────────
+    # Requires two counting semaphores (empty, full) + mutex for the buffer.
+    # A mutex alone can protect the buffer but cannot block on full/empty.
     if problem == "producer_consumer":
         if counting or (signals and blocks):
-            return "prevents"
+            return "prevents"    # counting semaphore or CV-capable primitive
         if technique == "mutex":
-            return "partial"     # protects buffer but can't block on full/empty
+            return "partial"     # protects buffer, but no slot-count blocking
         return "no"
 
+    # ── Readers–Writers ───────────────────────────────────────────────────────
+    # Requires either a counting semaphore (read_count) + mutex (write_lock),
+    # or a monitor with condition variables.
     if problem == "readers_writers":
         if counting or technique in ("monitor", "condition_variable"):
             return "prevents"
         if technique in ("mutex", "binary_semaphore"):
-            return "partial"     # correct but serialises readers (no concurrency)
+            return "partial"     # serialises all access; correct but loses read concurrency
         return "no"
 
+    # ── Dining Philosophers ───────────────────────────────────────────────────
+    # A mutex on each fork is the CLASSIC example of deadlock-via-circular-wait
+    # (Silberschatz §7.1.3). Mutex = partial (ME on forks, but naive acquisition
+    # deadlocks). Monitor/CV with Hoare's solution = prevents.
     if problem == "dining_philosophers":
-        if technique in ("monitor", "condition_variable", "counting_semaphore", "mutex"):
-            return "prevents"
-        if technique == "binary_semaphore":
-            return "partial"
+        if technique in ("monitor", "condition_variable"):
+            return "prevents"    # Hoare's monitor solution (Silberschatz §6.7.2)
+        if technique in ("counting_semaphore", "mutex", "binary_semaphore"):
+            return "partial"     # provides ME on forks; deadlock needs extra logic
         return "no"
 
     if problem == "sleeping_barber":
@@ -218,7 +292,7 @@ class DiagnosticsEngine:
         preemptive = sched_algorithm in ("round_robin", "srtf")
 
         cpu_trace = self._expand_gantt(gantt)
-        base_metrics = self._base_metrics(gantt, norm, averages)
+        base_metrics = self._base_metrics(gantt, norm, averages, sched.get("metrics"))
 
         # ── detection (unsynchronized baseline) ──
         problems = []
@@ -290,10 +364,24 @@ class DiagnosticsEngine:
                 seen.append(seg["pid"])
         return seen
 
-    def _base_metrics(self, gantt: list[dict], procs: list[dict], averages: dict) -> dict:
+    def _base_metrics(
+        self,
+        gantt: list[dict],
+        procs: list[dict],
+        averages: dict,
+        sched_metrics: list[dict] | None = None,
+    ) -> dict:
         makespan = max((seg["end"] for seg in gantt), default=0)
         busy = sum(seg["end"] - seg["start"] for seg in gantt if seg["pid"] != "IDLE")
         cpu_util = round(100 * busy / makespan, 1) if makespan else 0.0
+        # Jain's fairness on waiting times (Silberschatz §6.7):
+        # measures whether the scheduler distributed waiting time fairly.
+        # Falls back to burst-time uniformity if per-process metrics unavailable.
+        if sched_metrics:
+            wait_times = [m["waiting"] for m in sched_metrics]
+            fairness = self._jain(wait_times)
+        else:
+            fairness = self._jain([p["burst"] for p in procs])
         return {
             "makespan": makespan,
             "cpu_util": cpu_util,
@@ -301,31 +389,61 @@ class DiagnosticsEngine:
             "avg_waiting": averages.get("avg_waiting", 0),
             "avg_turnaround": averages.get("avg_turnaround", 0),
             "avg_response": averages.get("avg_response", 0),
-            "fairness": self._jain([p["burst"] for p in procs]),
+            "fairness": fairness,
         }
 
     def _rmw_count(self, burst: int) -> int:
-        """How many read-modify-write increments a process performs."""
+        """
+        How many read-modify-write (RMW) increments a process performs.
+
+        Approximation: each process performs burst//2 RMW operations on the
+        shared counter (half its burst time is "critical section work").
+        This proportional mapping means longer processes touch the shared
+        resource more, which is realistic for workloads where CS size scales
+        with job size.
+        """
         return max(1, burst // 2)
 
     def _total_critical_sections(self, procs: list[dict]) -> int:
+        """Total number of critical section entries across all processes (used to model sync overhead)."""
         return sum(self._rmw_count(p["burst"]) for p in procs)
 
-    # ── schedule-driven detection ────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Detection methods — only race/CS, deadlock, and starvation are derived
+    # from real scheduling data.  The other five return _no_problem() stubs
+    # with explanations of why they cannot be detected from a generic trace.
+    # ─────────────────────────────────────────────────────────────────────────
+
     def _detect_race_and_cs(self, trace: list[str | None], procs: list[dict]) -> list[dict]:
         """
-        Replay an unsynchronized shared-accumulator workload over the CPU trace.
+        Detect race conditions and CS violations from the CPU execution trace.
 
-        Each process performs a read-modify-write: it READS the shared counter at
-        its first CPU tick, works during its burst, and WRITES (read_value +
-        its increments) at its last CPU tick. The read→write window is its
-        critical section. If another process WRITES inside that window, the first
-        process overwrites with a stale value -> LOST UPDATE (race condition).
-        Two processes whose windows overlap -> CRITICAL SECTION VIOLATION.
+        Model (educational approximation):
+        Each process's "critical section window" spans [first_tick, last_tick]
+        across its entire CPU execution.  This is a deliberate simplification:
+        in real systems the CS is just the read-modify-write code, not the
+        whole burst.  However, this model is directionally correct:
 
-        Because the window spans the whole burst, ANY preemption that lets another
-        process run in between triggers the race — so the effect tracks the
-        scheduler's preemption behaviour, not the quantum size.
+            Non-preemptive (FCFS/SJF/Priority):
+                No two processes overlap → no race, no CS violation detected.
+
+            Preemptive (RR/SRTF):
+                Processes interleave → windows overlap → races and violations
+                are detected, which correctly reflects the increased synchronization
+                risk under preemptive scheduling (Silberschatz §6.1).
+
+        Race condition detection:
+            Process Pi reads X at first_tick[i].
+            Pi writes X + inc[i] at last_tick[i].
+            If another process Pj WROTE to X between first_tick[i] and last_tick[i],
+            Pi's write uses a stale read value → LOST UPDATE.
+
+        CS violation detection:
+            If process Pj's [first_tick, last_tick] window begins while Pi's window
+            is still open (open_read[Pi] == True), two processes are "inside the CS"
+            simultaneously → MUTUAL EXCLUSION VIOLATED.
+
+        Returns a LIST of two problem dicts: [race_condition, cs_violation].
         """
         inc = {p["pid"]: self._rmw_count(p["burst"]) for p in procs}
         first_tick: dict[str, int] = {}
@@ -425,13 +543,29 @@ class DiagnosticsEngine:
         self, trace: list[str | None], procs: list[dict], preemptive: bool
     ) -> dict:
         """
-        Overlay a two-resource hold-and-wait scenario on the first two processes.
+        Detect deadlock by overlaying a two-resource hold-and-wait model.
 
-        A acquires R1 (first RMW) then needs R2 (last op); B acquires R2 then
-        needs R1. If the schedule interleaves them so both grab their first
-        resource before either gets the second -> circular wait -> deadlock.
-        Contiguous (non-preemptive) execution lets the first finish and release,
-        so no deadlock.
+        Reference: Silberschatz §8.3 — Coffman conditions for deadlock.
+
+        Model:
+            Process A (procs[0]) acquires R1 on its first operation,
+                                  then requests R2 on its last operation.
+            Process B (procs[1]) acquires R2 on its first operation,
+                                  then requests R1 on its last operation.
+
+        Deadlock occurs when:
+            A acquires R1  →  B acquires R2  →  A requests R2 (held by B)  →  BLOCKED
+                                               →  B requests R1 (held by A)  →  BLOCKED
+            → CIRCULAR WAIT → DEADLOCK (Silberschatz §8.3.1)
+
+        Why preemptive schedules expose deadlock:
+        Under FCFS/non-preemptive, A completes (acquires R1, then R2, releases both)
+        before B starts — no interleaving, no circular wait.
+        Under Round Robin / SRTF, A and B interleave: A may grab R1, B may grab R2
+        before either finishes, creating the circular dependency.
+
+        This is academically valid: the model accurately reflects the
+        hold-and-wait interleaving that causes real deadlock on multi-resource systems.
         """
         if len(procs) < 2:
             return self._no_problem("deadlock", "Needs at least two processes holding resources.")
@@ -483,7 +617,7 @@ class DiagnosticsEngine:
         return {
             "id": "deadlock",
             "name": PROBLEM_META["deadlock"]["name"],
-            "category": "scheduling",
+            "category": "sync",
             "occurred": deadlock,
             "severity": "high" if deadlock else "none",
             "metrics": {
@@ -503,14 +637,40 @@ class DiagnosticsEngine:
         }
 
     def _detect_starvation(self, sched: dict, procs: list[dict]) -> dict:
-        """A process starves if its waiting time is far above the average."""
+        """
+        Detect starvation from real scheduler waiting times.
+
+        Reference: Silberschatz §6.6.
+
+        Starvation: a process is indefinitely (or excessively) delayed because
+        the scheduler consistently prefers other processes.  Common in priority
+        and SJF scheduling where long or low-priority processes wait much longer
+        than their peers.
+
+        Threshold heuristic (finite simulation):
+        Real starvation is "indefinite" — impossible to test in a finite run.
+        We flag a process as starved if its waiting time exceeds
+        max(2 × avg_wait, avg_wait + 1), i.e., it waited more than twice the
+        average AND its absolute wait is non-trivial.
+
+        This is a simulation heuristic, not a textbook formula.  It is
+        directionally correct: SJF and Priority with unequal bursts will flag
+        long processes as starved, while FCFS (which is arrival-order fair)
+        will show balanced waiting times.
+
+        Source of waiting times: computed by the scheduler's _build_metrics()
+        using WT = TAT − BT = (CT − AT) − BT.  These are REAL computed values,
+        not estimates.
+        """
         metrics = sched["metrics"]
         if not metrics:
             return self._no_problem("starvation", "No processes to evaluate.")
         waits = [(m["pid"], m["waiting"]) for m in metrics]
         avg = sum(w for _, w in waits) / len(waits)
         max_pid, max_wait = max(waits, key=lambda x: x[1])
-        # starvation: clearly worse than peers and non-trivial
+        # Flag processes that waited significantly more than their peers.
+        # The max(2*avg, avg+1) guard prevents false positives when all
+        # waiting times are near-zero (e.g. a 4-process FCFS with all arrivals at 0).
         starved = [
             pid for pid, w in waits
             if w > max(2 * avg, avg + 1) and w >= 2 and len(waits) > 1
@@ -520,7 +680,7 @@ class DiagnosticsEngine:
         return {
             "id": "starvation",
             "name": PROBLEM_META["starvation"]["name"],
-            "category": "scheduling",
+            "category": "sync",
             "occurred": occurred,
             "severity": "high" if occurred and max_wait > 3 * avg else ("medium" if occurred else "none"),
             "metrics": {
@@ -544,10 +704,28 @@ class DiagnosticsEngine:
         self, trace: list[str | None], procs: list[dict], preemptive: bool
     ) -> dict:
         """
-        Livelock: processes repeatedly swap CPU while both have open CS windows,
-        each preempting the other without either finishing its critical section.
-        Requires preemptive scheduling to manifest.
+        Livelock cannot be detected from a CPU scheduling trace.
+
+        Real livelock (Silberschatz §6.6) requires processes to voluntarily yield
+        to each other in response to each other's state — an active, state-changing
+        cycle with no progress. A CPU scheduler preempting processes is an external
+        forced context switch, not a voluntary mutual response. There is no
+        mechanism in a generic scheduling simulation where processes detect a
+        conflict and retry — which is the defining property of livelock.
+
+        Livelock is demonstrated properly in Phase 3 via a dedicated simulation.
         """
+        return self._no_problem(
+            "livelock",
+            "Livelock requires processes to voluntarily respond to each other's "
+            "state in a loop — this cannot be inferred from a CPU scheduling trace. "
+            "See Phase 3 for a dedicated livelock demonstration.",
+        )
+
+    def _detect_livelock_DISABLED(
+        self, trace: list[str | None], procs: list[dict], preemptive: bool
+    ) -> dict:
+        """Original livelock detection — disabled: was detecting normal RR preemption."""
         if not preemptive or len(procs) < 2:
             return self._no_problem(
                 "livelock",
@@ -642,365 +820,106 @@ class DiagnosticsEngine:
         self, trace: list[str | None], procs: list[dict]
     ) -> dict:
         """
-        Split processes into producers (first half) and consumers (second half).
-        Each CPU tick a producer increments the buffer; each tick a consumer
-        decrements it. Without sync: no bounds checking → overflow / underflow.
+        Producer-Consumer cannot be reliably detected from a generic scheduling trace.
+
+        The bounded-buffer problem (Silberschatz §6.4) requires processes to have
+        explicit producer/consumer roles and a shared bounded buffer. A generic CPU
+        scheduling trace has no such role information — splitting processes into
+        "first half = producers" is methodologically arbitrary and produces results
+        that are an artifact of scheduling order, not of buffer coordination failures.
+        The problem is correctly demonstrated in Phase 3 via the dedicated simulation.
         """
-        n = len(procs)
-        if n < 2:
-            return self._no_problem(
-                "producer_consumer",
-                "Need at least 2 processes (producers + consumers).",
-            )
-
-        mid       = (n + 1) // 2
-        producers = {p["pid"] for p in procs[:mid]}
-        consumers = {p["pid"] for p in procs[mid:]}
-
-        if not consumers:
-            return self._no_problem(
-                "producer_consumer", "No consumer processes in this workload."
-            )
-
-        BUFFER_MAX = max(3, n - 1)
-        buffer     = 0
-        overflows  = 0
-        underflows = 0
-        events: list[str] = []
-
-        for t, pid in enumerate(trace):
-            if pid is None:
-                continue
-            if pid in producers:
-                buffer += 1
-                if buffer > BUFFER_MAX:
-                    overflows += 1
-                    if len(events) < 6:
-                        events.append(
-                            f"t={t}: {pid} (producer) wrote to full buffer "
-                            f"({buffer}/{BUFFER_MAX}) — overflow, item overwritten"
-                        )
-            elif pid in consumers:
-                buffer -= 1
-                if buffer < 0:
-                    underflows += 1
-                    if len(events) < 6:
-                        events.append(
-                            f"t={t}: {pid} (consumer) read from empty buffer "
-                            f"({buffer}) — underflow, invalid data consumed"
-                        )
-
-        occurred = overflows > 0 or underflows > 0
-        return {
-            "id": "producer_consumer",
-            "name": PROBLEM_META["producer_consumer"]["name"],
-            "category": "sync",
-            "occurred": occurred,
-            "severity": (
-                "high"   if (overflows + underflows) > 2 else
-                "medium" if occurred else
-                "none"
-            ),
-            "metrics": {
-                "Buffer capacity": BUFFER_MAX,
-                "Overflow events": overflows,
-                "Underflow events": underflows,
-                "Final buffer level": max(0, buffer),
-            },
-            "events": events,
-            "explanation": (
-                f"Buffer overflowed {overflows} time(s) and underflowed {underflows} "
-                f"time(s). Producers and consumers ran concurrently without checking "
-                f"buffer bounds — counting semaphores for empty/full slots would "
-                f"prevent this."
-                if occurred else
-                f"The execution order kept the buffer within bounds (0–{BUFFER_MAX}). "
-                f"Without counting semaphores this is not guaranteed for all schedules."
-            ),
-        }
+        return self._no_problem(
+            "producer_consumer",
+            "Requires explicit producer/consumer role designation — cannot be inferred "
+            "from a generic CPU scheduling trace. See Phase 3 Producer–Consumer simulation.",
+        )
 
     def _detect_readers_writers(
         self, trace: list[str | None], procs: list[dict]
     ) -> dict:
         """
-        Even-indexed processes are readers, odd-indexed are writers.
-        A conflict occurs when a writer runs while any reader has an open read
-        window (first_tick..last_tick), meaning the writer corrupts data being read.
+        Readers-Writers cannot be reliably detected from a generic scheduling trace.
+
+        The readers-writers problem (Silberschatz §6.4) requires processes to have
+        explicit read/write intent on shared data. Assigning roles by index parity
+        (even=reader, odd=writer) is arbitrary and produces results that depend on
+        input order, not actual data-access patterns. Demonstrated in Phase 3.
         """
-        n = len(procs)
-        if n < 2:
-            return self._no_problem(
-                "readers_writers", "Need at least 2 processes."
-            )
-
-        writers = {p["pid"] for i, p in enumerate(procs) if i % 2 != 0}
-        readers = {p["pid"] for i, p in enumerate(procs) if i % 2 == 0}
-
-        if not writers:
-            return self._no_problem("readers_writers", "No writer processes.")
-
-        first_tick: dict[str, int] = {}
-        last_tick:  dict[str, int] = {}
-        for t, pid in enumerate(trace):
-            if pid is None:
-                continue
-            first_tick.setdefault(pid, t)
-            last_tick[pid] = t
-
-        conflicts = 0
-        events: list[str] = []
-
-        for t, pid in enumerate(trace):
-            if pid not in writers:
-                continue
-            active_readers = [
-                r for r in readers
-                if r in first_tick
-                and first_tick[r] <= t <= last_tick.get(r, first_tick[r])
-            ]
-            if active_readers:
-                conflicts += 1
-                if len(events) < 6:
-                    events.append(
-                        f"t={t}: {pid} (writer) modified shared data while "
-                        f"{active_readers[0]} (reader) was active — inconsistent read"
-                    )
-
-        occurred = conflicts > 0
-        return {
-            "id": "readers_writers",
-            "name": PROBLEM_META["readers_writers"]["name"],
-            "category": "sync",
-            "occurred": occurred,
-            "severity": "high" if conflicts > 2 else ("medium" if occurred else "none"),
-            "metrics": {
-                "Readers": len(readers),
-                "Writers": len(writers),
-                "Write–read conflicts": conflicts,
-            },
-            "events": events,
-            "explanation": (
-                f"A writer ran {conflicts} time(s) while readers were still active — "
-                f"readers observed a partially-written, inconsistent value. A "
-                f"reader-writer lock grants writers exclusive access."
-                if occurred else
-                f"Writers ran only when no readers were active under this schedule. "
-                f"Without a reader-writer lock this ordering is not guaranteed."
-            ),
-        }
+        return self._no_problem(
+            "readers_writers",
+            "Requires explicit reader/writer role designation — cannot be inferred "
+            "from a generic CPU scheduling trace. See Phase 3 Readers–Writers simulation.",
+        )
 
     def _detect_dining_philosophers(
         self, trace: list[str | None], procs: list[dict]
     ) -> dict:
         """
-        Treat up to 5 processes as philosophers around a table.
-        Each needs fork[i] (left) then fork[(i+1)%n] (right).
-        Simulate fork acquisition based on execution order; detect circular wait.
+        Dining Philosophers cannot be reliably detected from a generic scheduling trace.
+
+        The dining philosophers problem (Dijkstra 1965; Silberschatz §7.1.3) requires
+        a ring-topology of 5 processes sharing fork resources with explicit acquisition
+        protocol. Inferring fork acquisition from CPU burst timing has no academic
+        basis — a process with burst=8 and one with burst=2 behave differently only
+        because of their burst lengths, not because of resource contention topology.
+        Demonstrated in Phase 3.
         """
-        n = min(len(procs), 5)
-        if n < 2:
-            return self._no_problem(
-                "dining_philosophers", "Need at least 2 processes."
-            )
-
-        philosophers = [p["pid"] for p in procs[:n]]
-        ph_idx       = {pid: i for i, pid in enumerate(philosophers)}
-        forks        = [None] * n
-        holding: dict[str, list[int]] = {pid: [] for pid in philosophers}
-        blocked: dict[str, bool]       = {pid: False for pid in philosophers}
-        events: list[str] = []
-        deadlock = False
-
-        for t, pid in enumerate(trace):
-            if pid not in ph_idx or blocked[pid]:
-                continue
-
-            i     = ph_idx[pid]
-            left  = i
-            right = (i + 1) % n
-
-            # Acquire left fork if free
-            if left not in holding[pid] and forks[left] is None:
-                forks[left] = pid
-                holding[pid].append(left)
-                if len(events) < 8:
-                    events.append(f"t={t}: {pid} picked up fork {left} (left)")
-
-            # Acquire right fork if we already have left
-            if left in holding[pid] and right not in holding[pid]:
-                if forks[right] is None:
-                    forks[right] = pid
-                    holding[pid].append(right)
-                    if len(events) < 8:
-                        events.append(
-                            f"t={t}: {pid} picked up fork {right} (right) — eats"
-                        )
-                    for f in list(holding[pid]):
-                        forks[f] = None
-                    holding[pid] = []
-                else:
-                    blocked[pid] = True
-                    if len(events) < 8:
-                        events.append(
-                            f"t={t}: {pid} blocked — fork {right} held by {forks[right]}"
-                        )
-
-            # Deadlock: every philosopher holds exactly one fork and is blocked
-            all_hold_one = all(len(holding.get(p, [])) == 1 for p in philosophers)
-            all_blocked  = all(blocked.get(p, False) or len(holding.get(p, [])) > 0
-                               for p in philosophers)
-            if all_hold_one and not deadlock:
-                deadlock = True
-                if len(events) < 8:
-                    events.append(
-                        f"t={t}: every philosopher holds one fork and waits — "
-                        f"circular wait → DEADLOCK"
-                    )
-                break
-
-        blocked_count = sum(1 for pid in philosophers if blocked[pid])
-        # Only flag occurred on actual blocking — holding a fork while eating is normal
-        occurred = deadlock or blocked_count > 0
-
-        return {
-            "id": "dining_philosophers",
-            "name": PROBLEM_META["dining_philosophers"]["name"],
-            "category": "sync",
-            "occurred": occurred,
-            "severity": "high" if deadlock else ("medium" if occurred else "none"),
-            "metrics": {
-                "Philosophers": n,
-                "Blocked": blocked_count,
-                "Deadlock": "yes" if deadlock else "no",
-            },
-            "events": events,
-            "explanation": (
-                f"Deadlock: all {n} philosophers hold one fork each and wait for "
-                f"the other — circular wait, no one can eat."
-                if deadlock else
-                f"{blocked_count} philosopher(s) blocked waiting for the second fork. "
-                f"Resource ordering or a monitor would break the circular dependency."
-                if occurred else
-                "Philosophers acquired and released forks without circular wait — "
-                "no deadlock under this execution order."
-            ),
-        }
+        return self._no_problem(
+            "dining_philosophers",
+            "Requires explicit fork-acquisition protocol in a ring topology — cannot "
+            "be inferred from a CPU scheduling trace. See Phase 3 for demonstrations.",
+        )
 
     def _detect_sleeping_barber(
         self, trace: list[str | None], procs: list[dict], preemptive: bool
     ) -> dict:
         """
-        First process = barber, remaining = customers.
-        Customers arrive at their arrival times.
-        Without sync: race on the sleeping/waking state causes missed wakeups;
-        chair count has no atomic protection so customers can be lost.
+        Sleeping Barber cannot be reliably detected from a generic scheduling trace.
+
+        The sleeping barber problem (Tanenbaum §2.5.4) models an I/O service system
+        where a server (barber) sleeps when idle and customers signal via semaphores.
+        CPU scheduling traces contain no information about service-queue semantics,
+        wakeup signals, or barber/customer roles. Treating procs[0] as a barber and
+        using its appearance in the Gantt chart as a "wakeup" has no textbook basis.
+        Demonstrated in Phase 3.
         """
-        if len(procs) < 2:
-            return self._no_problem(
-                "sleeping_barber", "Need at least 2 processes."
-            )
-
-        barber    = procs[0]["pid"]
-        customers = procs[1:]
-        chairs    = max(2, len(customers) - 1)
-
-        waiting: list[str] = []
-        served:  list[str] = []
-        lost:    list[str] = []
-        # Track which customers arrived while barber was sleeping.
-        # A missed wakeup is confirmed if the barber later starts running
-        # without those customers being at the head of the queue
-        # (i.e. the barber "woke" from something else, not their signal).
-        arrived_while_asleep: list[str] = []
-        missed_wakeups = 0
-        barber_sleeping = True
-        arrived: set[str] = set()
-        events: list[str] = []
-
-        for t, pid in enumerate(trace):
-            # Process customer arrivals at this tick
-            for cust in customers:
-                if cust["arrival"] == t and cust["pid"] not in arrived:
-                    arrived.add(cust["pid"])
-                    if len(waiting) < chairs:
-                        waiting.append(cust["pid"])
-                        if barber_sleeping:
-                            arrived_while_asleep.append(cust["pid"])
-                            if len(events) < 6:
-                                events.append(
-                                    f"t={t}: {cust['pid']} arrived — barber sleeping, "
-                                    f"no atomic wakeup signal (potential missed wakeup)"
-                                )
-                    else:
-                        lost.append(cust["pid"])
-                        if len(events) < 6:
-                            events.append(
-                                f"t={t}: {cust['pid']} arrived, all {chairs} chairs full — "
-                                f"customer leaves without service"
-                            )
-
-            if pid is None:
-                continue
-
-            if pid == barber:
-                if barber_sleeping:
-                    # Barber just woke — if it woke but queue is empty (customer signal
-                    # was lost) that is a confirmed missed wakeup
-                    if not waiting and arrived_while_asleep:
-                        missed_wakeups += len(arrived_while_asleep)
-                        if len(events) < 6:
-                            events.append(
-                                f"t={t}: barber woke but waiting queue is empty — "
-                                f"{len(arrived_while_asleep)} wakeup(s) lost"
-                            )
-                    arrived_while_asleep = []
-                    barber_sleeping = False
-                if waiting:
-                    customer = waiting.pop(0)
-                    served.append(customer)
-                    if len(events) < 6:
-                        events.append(f"t={t}: barber serves {customer}")
-                else:
-                    barber_sleeping = True
-
-        occurred = len(lost) > 0 or missed_wakeups > 0
-        return {
-            "id": "sleeping_barber",
-            "name": PROBLEM_META["sleeping_barber"]["name"],
-            "category": "sync",
-            "occurred": occurred,
-            "severity": "medium" if occurred else "none",
-            "metrics": {
-                "Chairs": chairs,
-                "Customers served": len(served),
-                "Customers lost": len(lost),
-                "Missed wakeups": missed_wakeups,
-            },
-            "events": events,
-            "explanation": (
-                f"{len(lost)} customer(s) turned away (waiting room full) and "
-                f"{missed_wakeups} potential missed wakeup(s). Without atomic signaling "
-                f"a customer can arrive while the barber checks for work — the wakeup "
-                f"is lost and the customer waits forever."
-                if occurred else
-                "All customers were served and wakeups were not lost under this schedule. "
-                "Semaphore-based signaling is still required to guarantee correctness."
-            ),
-        }
+        return self._no_problem(
+            "sleeping_barber",
+            "Models I/O service queues with semaphore-based wakeup — not applicable "
+            "to a CPU scheduling trace. See Phase 3 for demonstrations.",
+        )
 
     def _no_problem(self, pid: str, why: str) -> dict:
+        """Return a standard 'not detected / not applicable' result dict."""
         return {
-            "id": pid, "name": PROBLEM_META[pid]["name"],
-            "category": PROBLEM_META[pid]["category"],
-            "occurred": False, "severity": "none",
-            "metrics": {}, "events": [], "explanation": why,
+            "id":          pid,
+            "name":        PROBLEM_META[pid]["name"],
+            "category":    PROBLEM_META[pid]["category"],
+            "occurred":    False,
+            "severity":    "none",
+            "metrics":     {},
+            "events":      [],
+            "explanation": why,
         }
 
-    # ── technique evaluation ─────────────────────────────────────────────────
+    # ── technique evaluation ──────────────────────────────────────────────────
+
     def _contention(self, trace: list[str | None], procs: list[dict], preemptive: bool) -> float:
-        """0..1 — how much processes compete (drives overhead)."""
-        n = len(procs)
+        """
+        Compute a contention score [0.0 – 1.0] from the CPU trace.
+
+        Combines two signals:
+          - base: fraction of n processes that could compete (n-1)/n
+          - switch_factor: actual context-switch density in the trace
+
+        Higher contention → higher synchronization overhead model.
+        Preemptive algorithms get a +0.1 bonus because frequent preemption
+        means processes are more likely to be interrupted mid-CS.
+        """
+        n    = len(procs)
         base = (n - 1) / n if n else 0.0
+        # Count ticks where the running PID changed (context switches)
         switches = sum(
             1 for i in range(1, len(trace))
             if trace[i] is not None and trace[i] != trace[i - 1] and trace[i - 1] is not None
@@ -1018,6 +937,22 @@ class DiagnosticsEngine:
         contention: float,
         total_cs: int,
     ) -> dict:
+        """
+        Analytically model a technique's performance against the detected problems.
+
+        Three dimensions:
+          1. Prevention ratio — fraction of detected problems the technique can address
+             (from the _capability() matrix; "prevents"=1, "partial"=0.5, "no"=0)
+          2. Overhead model  — estimated extra ticks added by lock operations
+             base_overhead   = meta["ovh"] × total_cs  (lock/unlock cost per CS entry)
+             busy_penalty    = contention × cs × 2     (CPU time wasted by busy-waiting)
+             concurrency_relief = cs × 0.5             (counting semaphore concurrent slots)
+          3. Performance metrics — throughput, avg_waiting, cpu_util derived from overhead
+
+        Note: these are ANALYTICAL ESTIMATES, not measured from a real lock run.
+        They are used in Phase 2 to rank techniques BEFORE Phase 3 runs real simulations.
+        Phase 3 replace them with actual measured values from SyncSimulator.
+        """
         meta = TECHNIQUE_META[technique]
 
         # 1) capability against the problems that actually occurred
@@ -1092,7 +1027,19 @@ class DiagnosticsEngine:
         }
 
     def _score(self, evals: list[dict]) -> None:
-        """Min-max normalise across techniques, then weighted composite 0..100."""
+        """
+        Score technique evaluations using min-max normalisation across the group.
+
+        Each metric is normalised to [0, 1] relative to the best and worst in
+        the current comparison set, then combined with fixed weights:
+            40% prevention ratio  — does it stop the detected problems?
+            15% throughput        — higher is better
+            15% avg waiting       — lower is better (inverted)
+            15% fairness          — higher is better
+            15% overhead          — lower is better (inverted)
+
+        The _raw dict is removed after scoring to keep the API response clean.
+        """
         def col(key: str) -> list[float]:
             return [e["_raw"][key] for e in evals]
 
@@ -1122,6 +1069,14 @@ class DiagnosticsEngine:
     def _recommend(
         self, evals: list[dict], occurred: list[dict], sched: str, base: dict
     ) -> dict:
+        """
+        Generate the Phase 2 recommendation text from the ranked technique list.
+
+        Produces a one-paragraph summary and a bullet list suitable for the
+        Phase 4 report.  The best technique (evals[0]) and runner-up (evals[1])
+        are highlighted.  The text explicitly states that the scheduler exposes
+        problems but does not cause them — reinforcing the methodology.
+        """
         if not evals:
             return {"summary": "No techniques evaluated.", "bullets": []}
         best = evals[0]
@@ -1163,21 +1118,46 @@ class DiagnosticsEngine:
         return {"summary": summary, "bullets": bullets, "best_technique": best["technique"]}
 
     # ── math ─────────────────────────────────────────────────────────────────
+
     @staticmethod
     def _jain(values: list[float]) -> float:
-        """Jain's fairness index (1.0 = perfectly fair)."""
+        """
+        Jain's Fairness Index — measures how evenly values are distributed.
+
+        Formula (Jain 1984):  J = (Σ xᵢ)² / (n · Σ xᵢ²)
+
+        Range: (0, 1].  J = 1.0 means all values are equal (perfectly fair).
+        J → 0 means one value dominates all others (maximally unfair).
+
+        Applied here to WAITING TIMES:
+            J = 1.0 → every process waited the same amount.
+            J < 1.0 → some processes waited much longer than others.
+
+        FCFS example (P1 burst=8, P2 burst=3, P3 burst=5, P4 burst=2):
+            WT = [0, 8, 11, 16] → highly unequal → J ≈ 0.71
+        Round Robin (same processes):
+            WT values are more balanced → J ≈ 0.90
+
+        Edge case: if all values are zero (no waiting), sq=0 → return 1.0
+        (all processes waited equally, i.e. zero — perfectly fair).
+        """
         vals = [v for v in values if v is not None]
         if not vals:
             return 1.0
-        s = sum(vals)
+        s  = sum(vals)
         sq = sum(v * v for v in vals)
-        n = len(vals)
+        n  = len(vals)
         if sq == 0:
-            return 1.0
+            return 1.0   # all values are zero → perfectly equal
         return round((s * s) / (n * sq), 2)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Module-level accessors (used by Flask routes)
+# ─────────────────────────────────────────────────────────────────────────────
+
 def list_techniques() -> list[dict[str, str]]:
+    """Return all synchronization technique profiles (id, name, description)."""
     return [
         {"id": k, "name": v["name"], "description": v["desc"]}
         for k, v in TECHNIQUE_META.items()
@@ -1185,6 +1165,7 @@ def list_techniques() -> list[dict[str, str]]:
 
 
 def list_problems() -> list[dict[str, str]]:
+    """Return all problem descriptors (id, name, category) from PROBLEM_META."""
     return [
         {"id": k, "name": v["name"], "category": v["category"]}
         for k, v in PROBLEM_META.items()

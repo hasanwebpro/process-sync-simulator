@@ -20,8 +20,8 @@ const SyncViz = {
   _resize() {
     const wrap = this.canvas?.parentElement;
     if (!wrap || !this.canvas) return;
-    this.canvas.width = Math.max(wrap.clientWidth - 2, 300);
-    this.canvas.height = 220;
+    this.canvas.width  = Math.max(wrap.clientWidth - 2, 300);
+    this.canvas.height = 680;
     if (this.steps.length) this.drawCanvas(this.steps[this.currentIndex]);
   },
 
@@ -112,96 +112,154 @@ const SyncViz = {
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    // Vice City dark-purple background
+    // Background
     const bg = ctx.createLinearGradient(0, 0, w, h);
     bg.addColorStop(0, "#100020");
     bg.addColorStop(1, "#080018");
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // Critical section box
-    const csX = w * 0.32;
-    const csW = w * 0.36;
-    const csY = 36;
-    const csH = h - 100;
-
     const inCs = step.critical_section || [];
+    const wq   = step.waiting_queue   || [];
     const glow = inCs.length > 0;
 
-    if (glow) {
-      ctx.shadowColor = "#39FF14";
-      ctx.shadowBlur  = 28;
-    }
-    ctx.strokeStyle = glow ? "#39FF14" : "rgba(0, 212, 212, 0.4)";
+    // ── Shared Resource box ───────────────────────────────────────────────
+    const csX = w * 0.18;
+    const csW = w * 0.64;
+    const csY = 56;
+    const csH = 220;
+    const csCx = csX + csW / 2;
+
+    if (glow) { ctx.shadowColor = "#39FF14"; ctx.shadowBlur = 22; }
+    ctx.strokeStyle = glow ? "#39FF14" : "rgba(0,212,212,0.4)";
     ctx.lineWidth   = glow ? 3 : 2;
-    ctx.fillStyle   = glow ? "rgba(57, 255, 20, 0.08)" : "rgba(0, 212, 212, 0.05)";
+    ctx.fillStyle   = glow ? "rgba(57,255,20,0.07)" : "rgba(0,212,212,0.04)";
     ctx.fillRect(csX, csY, csW, csH);
     ctx.strokeRect(csX, csY, csW, csH);
     ctx.shadowBlur = 0;
 
-    ctx.fillStyle = "#9070B0";
-    ctx.font = "10px Outfit";
-    ctx.textAlign = "left";
-    ctx.fillText("SHARED RESOURCE", csX, csY - 6);
-
-    ctx.fillStyle = glow ? "#39FF14" : "#00D4D4";
-    ctx.font = '600 12px "Orbitron", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(
-      inCs.length ? "LOCKED — IN USE" : "OPEN — NO ONE INSIDE",
-      csX + csW / 2, csY + 20
-    );
-
-    if (inCs.length) {
-      ctx.font = "13px JetBrains Mono";
-      ctx.fillStyle = "#EEE0FF";
-      ctx.fillText(inCs.join(" · "), csX + csW / 2, csY + csH / 2);
-    } else {
-      ctx.font = "11px Outfit";
-      ctx.fillStyle = "#9070B0";
-      ctx.fillText("— empty —", csX + csW / 2, csY + csH / 2);
-    }
-
-    // CPU box — hot pink
-    if (step.active_cpu) {
-      ctx.fillStyle   = "rgba(255, 45, 120, 0.15)";
-      ctx.strokeStyle = "#FF2D78";
-      ctx.lineWidth   = 2;
-      ctx.shadowColor = "#FF2D78";
-      ctx.shadowBlur  = 10;
-      const cpuX = 16;
-      const cpuY = csY + 10;
-      ctx.fillRect(cpuX, cpuY, 70, 50);
-      ctx.strokeRect(cpuX, cpuY, 70, 50);
-      ctx.shadowBlur  = 0;
-      ctx.fillStyle   = "#FF2D78";
-      ctx.font = '600 10px "Orbitron"';
-      ctx.textAlign = "center";
-      ctx.fillText("CPU", cpuX + 35, cpuY + 18);
-      ctx.font = "bold 14px JetBrains Mono";
-      ctx.fillStyle = "#EEE0FF";
-      ctx.fillText(step.active_cpu, cpuX + 35, cpuY + 38);
-    }
-
-    // CPU time interval label
-    if (step.cpu_interval) {
-      ctx.fillStyle  = "#9070B0";
-      ctx.font = "10px JetBrains Mono";
-      ctx.textAlign = "right";
-      ctx.fillText(
-        `t=${step.cpu_interval.start}–${step.cpu_interval.end}`,
-        w - 12, 20
-      );
-    }
-
-    // Action label at bottom
+    // Label above box
     ctx.fillStyle  = "#9070B0";
-    ctx.font = "11px Outfit";
+    ctx.font       = "10px Outfit";
+    ctx.textAlign  = "left";
+    ctx.fillText("SHARED RESOURCE", csX, csY - 8);
+
+    // Status line (top of box)
+    ctx.fillStyle  = glow ? "#39FF14" : "#00D4D4";
+    ctx.font       = '700 12px "Orbitron", sans-serif';
+    ctx.textAlign  = "center";
+    ctx.fillText(inCs.length ? "🔒 LOCKED — IN USE" : "OPEN — NO ONE INSIDE", csCx, csY + 24);
+
+    // ── Processes INSIDE the CS box ───────────────────────────────────────
+    if (inCs.length) {
+      const chipW = 94, chipH = 52, chipGap = 16;
+      const totalW = inCs.length * chipW + (inCs.length - 1) * chipGap;
+      let cx = csCx - totalW / 2;
+      const cy = csY + (csH - chipH) / 2 + 12;
+
+      inCs.forEach(pid => {
+        ctx.shadowColor = "#39FF14"; ctx.shadowBlur = 16;
+        ctx.fillStyle   = "rgba(57,255,20,0.18)";
+        ctx.strokeStyle = "#39FF14"; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.roundRect(cx, cy, chipW, chipH, 10);
+        ctx.fill(); ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        ctx.font      = "bold 20px JetBrains Mono";
+        ctx.fillStyle = "#D8FFD0";
+        ctx.textAlign = "center";
+        ctx.fillText(pid, cx + chipW / 2, cy + chipH / 2 + 7);
+        cx += chipW + chipGap;
+      });
+    } else {
+      ctx.font      = "italic 13px Outfit";
+      ctx.fillStyle = "#4A3870";
+      ctx.textAlign = "center";
+      ctx.fillText("— empty —", csCx, csY + csH / 2 + 10);
+    }
+
+    // ── Waiting queue BELOW the CS box ───────────────────────────────────
+    if (wq.length) {
+      const qChipW = 68, qChipH = 42, qGap = 12;
+      const totalQW = wq.length * qChipW + (wq.length - 1) * qGap;
+      const qY  = csY + csH + 62;
+      let   qX  = csCx - totalQW / 2;
+
+      // Dashed arrow from queue up to CS box bottom
+      const arrowTipY = csY + csH + 2;
+      const arrowBaseY = qY - 8;
+      ctx.strokeStyle = "rgba(255,176,32,0.45)";
+      ctx.lineWidth   = 1.5;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(csCx, arrowBaseY);
+      ctx.lineTo(csCx, arrowTipY + 8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // arrowhead (pointing up)
+      ctx.fillStyle = "#FFB020";
+      ctx.beginPath();
+      ctx.moveTo(csCx,     arrowTipY);
+      ctx.lineTo(csCx - 7, arrowTipY + 11);
+      ctx.lineTo(csCx + 7, arrowTipY + 11);
+      ctx.closePath(); ctx.fill();
+
+      // "WAITING QUEUE" label
+      ctx.fillStyle  = "#FFB020";
+      ctx.font       = '700 10px "Orbitron"';
+      ctx.textAlign  = "center";
+      ctx.fillText("WAITING QUEUE", csCx, qY - 14);
+
+      // Chips
+      wq.forEach((pid, i) => {
+        ctx.fillStyle   = "rgba(255,176,32,0.12)";
+        ctx.strokeStyle = "#FFB020"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.roundRect(qX, qY, qChipW, qChipH, 8);
+        ctx.fill(); ctx.stroke();
+
+        ctx.fillStyle  = "#FFB020";
+        ctx.font       = "bold 10px Outfit";
+        ctx.textAlign  = "center";
+        ctx.fillText(`#${i + 1}`, qX + qChipW / 2, qY + 14);
+
+        ctx.fillStyle  = "#EEE0FF";
+        ctx.font       = "bold 15px JetBrains Mono";
+        ctx.fillText(pid, qX + qChipW / 2, qY + 32);
+        qX += qChipW + qGap;
+      });
+    }
+
+    // ── CPU box — top-left ────────────────────────────────────────────────
+    if (step.active_cpu) {
+      const cpuX = 10, cpuY = 10;
+      ctx.fillStyle   = "rgba(255,45,120,0.15)";
+      ctx.strokeStyle = "#FF2D78"; ctx.lineWidth = 2;
+      ctx.shadowColor = "#FF2D78"; ctx.shadowBlur = 8;
+      ctx.fillRect(cpuX, cpuY, 80, 56);
+      ctx.strokeRect(cpuX, cpuY, 80, 56);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle  = "#FF2D78";
+      ctx.font       = '700 10px "Orbitron"';
+      ctx.textAlign  = "center";
+      ctx.fillText("CPU", cpuX + 40, cpuY + 17);
+      ctx.font       = "bold 15px JetBrains Mono";
+      ctx.fillStyle  = "#EEE0FF";
+      ctx.fillText(step.active_cpu, cpuX + 40, cpuY + 40);
+    }
+
+    // ── CPU interval — top-right ──────────────────────────────────────────
+    if (step.cpu_interval) {
+      ctx.fillStyle = "#9070B0";
+      ctx.font      = "9px JetBrains Mono";
+      ctx.textAlign = "right";
+      ctx.fillText(`t=${step.cpu_interval.start}–${step.cpu_interval.end}`, w - 8, 16);
+    }
+
+    // ── Action label — bottom-centre ──────────────────────────────────────
+    ctx.fillStyle = "#9070B0";
+    ctx.font      = "11px Outfit";
     ctx.textAlign = "center";
-    ctx.fillText(
-      (step.action || "step").replace(/_/g, " ").toUpperCase(),
-      w / 2, h - 12
-    );
+    ctx.fillText((step.action || "step").replace(/_/g, " ").toUpperCase(), w / 2, h - 10);
   },
 
   updateResourceBar(step) {
