@@ -2,13 +2,19 @@
 sync_engine.py — Process Synchronization Algorithm Simulations
 ===============================================================
 
-Implements ten synchronization scenarios as discrete, step-by-step
+Implements eleven synchronization scenarios as discrete, step-by-step
 simulations.  Each simulation produces a list of "steps" — snapshots of
 the system state at every meaningful event — which the frontend plays back
 as an animated walkthrough.
 
-Algorithms
-----------
+Scope: GENERIC synchronization problems only — race condition, critical
+section problem, mutual exclusion violation, deadlock, livelock, starvation
+(indefinite blocking), and busy waiting (spin waiting).  Role-based textbook
+models (producer-consumer, readers-writers, dining philosophers, sleeping
+barber) are intentionally excluded.
+
+Algorithms (solutions)
+----------------------
 Software-only mutual exclusion (no hardware atomics):
     peterson          — Peterson's two-process ME solution (Silberschatz §6.3.1)
     dekker            — Dekker's algorithm, the first software ME solution (Tanenbaum §2.3.3)
@@ -18,14 +24,15 @@ Hardware-assisted primitives:
     binary_semaphore  — P()/V() on a 0/1 counter (Silberschatz §6.6)
     counting_semaphore— P()/V() on an N counter, models resource pools (Silberschatz §6.6)
 
-Classic OS problems (solved with semaphores/monitors):
-    producer_consumer — bounded buffer with mutex + empty/full semaphores (Silberschatz §6.4)
-    readers_writers   — first readers-writers problem, readers-preference (Silberschatz §7.1.2)
+Structured high-level construct:
     monitor           — monitor with condition variables, signal-and-continue (Silberschatz §6.7)
 
-Demonstration scenarios (show what happens WITHOUT synchronization):
+Problem demonstrations (show each generic problem actually happening):
     race_condition    — unsafe read-modify-write interleaving vs mutex-protected (Silberschatz §6.1)
     deadlock_demo     — classic circular wait on two resources (Silberschatz §8.3.1)
+    livelock_demo     — mutual deference loop: both yield repeatedly, no progress (Silberschatz §6.6)
+    starvation_demo   — unfair lock always favours high-priority processes (Silberschatz §6.6)
+    busy_wait_demo    — spinlock burning CPU cycles while waiting (Silberschatz §6.5)
 
 Step format
 -----------
@@ -70,11 +77,12 @@ class SyncSimulator:
             "mutex":              self._mutex,
             "binary_semaphore":   self._binary_semaphore,
             "counting_semaphore": self._counting_semaphore,
-            "producer_consumer":  self._producer_consumer,
-            "readers_writers":    self._readers_writers,
             "monitor":            self._monitor,
             "race_condition":     self._race_condition,
             "deadlock_demo":      self._deadlock_demo,
+            "livelock_demo":      self._livelock_demo,
+            "starvation_demo":    self._starvation_demo,
+            "busy_wait_demo":     self._busy_wait_demo,
         }
 
     def list_algorithms(self) -> list[dict[str, str]]:
@@ -85,11 +93,12 @@ class SyncSimulator:
             "mutex":              ("Mutex Lock",             "Strict mutual exclusion via acquire/release."),
             "binary_semaphore":   ("Binary Semaphore",       "P()/V() operations on a 0/1 counter."),
             "counting_semaphore": ("Counting Semaphore",     "P()/V() on an N counter; models resource pools."),
-            "producer_consumer":  ("Producer–Consumer",      "Bounded buffer with mutex + empty/full semaphores."),
-            "readers_writers":    ("Readers–Writers",        "Shared read, exclusive write (readers-preference)."),
             "monitor":            ("Monitor",                "Condition variables with signal-and-continue semantics."),
-            "race_condition":     ("Race Condition",         "Unsafe shared counter vs mutex-protected (demo)."),
+            "race_condition":     ("Race Condition Demo",    "Unsafe shared counter vs mutex-protected (demo)."),
             "deadlock_demo":      ("Deadlock Demo",          "Circular wait on two resources (demo)."),
+            "livelock_demo":      ("Livelock Demo",          "Both processes repeatedly yield to each other — no progress (demo)."),
+            "starvation_demo":    ("Starvation Demo",        "Unfair lock keeps bypassing the low-priority process (demo)."),
+            "busy_wait_demo":     ("Busy Waiting Demo",      "Spinlock wastes CPU cycles while waiting for the lock (demo)."),
         }
         return [{"id": k, "name": v[0], "description": v[1]} for k, v in meta.items()]
 
@@ -100,7 +109,7 @@ class SyncSimulator:
         Parameters
         ----------
         algorithm — one of the IDs from list_algorithms()
-        config    — optional parameter dict (iterations, buffer_size, slots, …)
+        config    — optional parameter dict (iterations, slots, increments, …)
 
         Returns
         -------
@@ -638,258 +647,6 @@ class SyncSimulator:
         emit("done", f"Semaphore done. counter={counter}", [])
         return steps, {"final_counter": counter, "initial_slots": initial, "mutual_exclusion": initial == 1}
 
-    def _producer_consumer(self, config: dict) -> tuple[list, dict]:
-        """
-        Producer-Consumer (Bounded Buffer) Problem.
-
-        Reference: Silberschatz §6.4 / Dijkstra 1968.
-
-        Problem statement:
-        A producer and consumer share a bounded buffer of size N.
-        Without synchronization: the producer may write to a full buffer
-        (overflow) or the consumer may read from an empty one (underflow).
-
-        Solution uses THREE semaphores:
-            mutex  (initial=1) — binary semaphore protecting buffer access.
-                                 Ensures at most one process modifies the
-                                 buffer at a time (mutual exclusion).
-            empty  (initial=N) — counts available empty slots.
-                                 Producer waits on this before writing.
-            full   (initial=0) — counts filled slots.
-                                 Consumer waits on this before reading.
-
-        Producer protocol:                Consumer protocol:
-            P(empty)   ← wait for slot        P(full)    ← wait for item
-            P(mutex)   ← enter CS             P(mutex)   ← enter CS
-            add item                           remove item
-            V(mutex)   ← exit CS              V(mutex)   ← exit CS
-            V(full)    ← signal item ready     V(empty)   ← signal slot free
-
-        Critical ordering rule (Silberschatz §6.4):
-        P(empty)/P(full) MUST come BEFORE P(mutex).
-        Reversing the order (P(mutex) first) risks deadlock: the producer
-        holds mutex and waits on empty; the consumer is blocked on mutex
-        and cannot call V(empty) → circular wait.
-        """
-        buffer_size = int(config.get("buffer_size", 5))
-        items = int(config.get("items", 6))
-        steps: list[dict] = []
-        tick = 0
-        buffer: list[int] = []
-        procs = {"Producer": "READY", "Consumer": "READY"}
-        mutex = 1  # Binary semaphore for buffer protection
-        empty_slots = buffer_size
-        full_slots = 0
-        produced = consumed = 0
-
-        def emit(action: str, msg: str, active: str | None = None) -> None:
-            nonlocal tick
-            cs = [active] if active else []
-            steps.append(
-                self._step(
-                    tick, procs, action, msg,
-                    critical_section=cs,
-                    resources={"mutex": mutex, "empty": empty_slots, "full": full_slots},
-                    shared_vars={"buffer": buffer[:], "produced": produced, "consumed": consumed},
-                )
-            )
-            tick += 1
-
-        emit("init", f"Producer-Consumer: buffer_size={buffer_size}, items={items}. mutex=1, empty={buffer_size}, full=0", None)
-
-        item_id = 0
-        while consumed < items:
-            # --- Producer ---
-            if produced < items and empty_slots > 0:
-                procs["Producer"] = "RUNNING"
-                procs["Consumer"] = "READY"
-
-                # P(empty) — wait for empty slot
-                emit("P_empty", f"Producer: P(empty) — empty_slots={empty_slots}→{empty_slots-1}", "Producer")
-                empty_slots -= 1
-
-                # P(mutex) — enter critical section
-                if mutex == 0:
-                    emit("P_mutex_wait", "Producer: P(mutex) — waiting (mutex=0)", None)
-                mutex = 0  # Acquire mutex
-                emit("P_mutex", f"Producer: P(mutex) — acquired lock, mutex=0 (locked)", "Producer")
-
-                # Produce item and add to buffer
-                item_id += 1
-                buffer.append(item_id)
-                produced += 1
-                emit("produce", f"Producer: added item {item_id} to buffer={buffer}", "Producer")
-
-                # V(mutex) — release mutex
-                mutex = 1
-                emit("V_mutex", f"Producer: V(mutex) — released lock, mutex=1 (unlocked)", "Producer")
-
-                # V(full) — signal item available
-                full_slots += 1
-                emit("V_full", f"Producer: V(full) — full_slots={full_slots}", None)
-                procs["Producer"] = "READY"
-
-            # --- Consumer ---
-            if full_slots > 0 and consumed < produced:
-                procs["Consumer"] = "RUNNING"
-                procs["Producer"] = "READY"
-
-                # P(full) — wait for item
-                emit("P_full", f"Consumer: P(full) — full_slots={full_slots}→{full_slots-1}", "Consumer")
-                full_slots -= 1
-
-                # P(mutex) — enter critical section
-                if mutex == 0:
-                    emit("P_mutex_wait", "Consumer: P(mutex) — waiting (mutex=0)", None)
-                mutex = 0  # Acquire mutex
-                emit("P_mutex", f"Consumer: P(mutex) — acquired lock, mutex=0 (locked)", "Consumer")
-
-                # Consume item from buffer
-                item = buffer.pop(0)
-                consumed += 1
-                emit("consume", f"Consumer: removed item {item} from buffer={buffer}", "Consumer")
-
-                # V(mutex) — release mutex
-                mutex = 1
-                emit("V_mutex", f"Consumer: V(mutex) — released lock, mutex=1 (unlocked)", "Consumer")
-
-                # V(empty) — signal slot available
-                empty_slots += 1
-                emit("V_empty", f"Consumer: V(empty) — empty_slots={empty_slots}", None)
-                procs["Consumer"] = "READY"
-
-        procs = {k: "TERMINATED" for k in procs}
-        emit("done", f"Producer-Consumer complete. Produced={produced}, Consumed={consumed}", None)
-        return steps, {
-            "produced": produced,
-            "consumed": consumed,
-            "buffer_size": buffer_size,
-            "mutual_exclusion": True,
-        }
-
-    def _readers_writers(self, config: dict) -> tuple[list, dict]:
-        """
-        First Readers-Writers Problem (readers-preference variant).
-
-        Reference: Silberschatz §7.1.2 / Courtois et al. 1971.
-
-        Problem statement:
-        Multiple readers may access shared data concurrently (reading does not
-        modify the data, so concurrent reads are safe).  A writer needs EXCLUSIVE
-        access: no reader or other writer may be active while it writes.
-
-        Shared variables:
-            read_count  — number of currently active readers
-            write_lock  — binary semaphore; held by readers (as a group) or a writer
-
-        Reader protocol:
-            acquire(mutex)          ← protect read_count update
-            read_count += 1
-            if read_count == 1: P(write_lock)   ← first reader locks out writers
-            release(mutex)
-            --- read shared data ---
-            acquire(mutex)
-            read_count -= 1
-            if read_count == 0: V(write_lock)   ← last reader releases writers
-            release(mutex)
-
-        Writer protocol:
-            P(write_lock)           ← exclusive access
-            --- write shared data ---
-            V(write_lock)
-
-        Readers-preference (first problem): readers are never blocked by waiting
-        writers — as long as a reader holds write_lock, new readers may join.
-        This can cause WRITER STARVATION (Silberschatz §7.1.2).
-
-        The second readers-writers problem gives writers priority to avoid starvation.
-        """
-        return self._readers_writers_contention(config)
-
-    def _readers_writers_contention(self, config: dict) -> tuple[list, dict]:
-        """
-        Simulate the first readers-writers problem: readers share, writers wait.
-
-        The simulation shows a group of readers entering together (concurrent
-        reads are allowed), with writers blocked until all readers finish.
-        """
-        readers = int(config.get("readers", 2))
-        writers = int(config.get("writers", 2))
-        ops = int(config.get("operations", 2))
-        steps: list[dict] = []
-        tick = 0
-        read_count = 0
-        write_lock = False
-        procs: dict[str, str] = {}
-        for i in range(readers):
-            procs[f"R{i}"] = "READY"
-        for i in range(writers):
-            procs[f"W{i}"] = "READY"
-        waiting: list[str] = []
-
-        def emit(action: str, msg: str, cs: list[str]) -> None:
-            nonlocal tick
-            steps.append(
-                self._step(
-                    tick,
-                    procs,
-                    action,
-                    msg,
-                    critical_section=cs,
-                    waiting_queue=list(waiting),
-                    shared_vars={"read_count": read_count, "write_lock": write_lock},
-                )
-            )
-            tick += 1
-
-        emit("init", "Readers-Writers: readers share access; writers require exclusive access", [])
-
-        for operation in range(ops):
-            active_readers: list[str] = []
-            emit("round_start", f"Operation {operation + 1}: reader group arrives before writers", [])
-
-            for i in range(readers):
-                pid = f"R{i}"
-                procs[pid] = "RUNNING"
-                emit("read_request", f"{pid} wants to read", active_readers)
-                if read_count == 0:
-                    write_lock = True
-                    emit("read_lock", f"{pid} is first reader - acquires write_lock against writers", active_readers)
-                read_count += 1
-                active_readers.append(pid)
-                procs[pid] = "RUNNING"
-                emit("reading", f"{pid} starts reading with {read_count} active reader(s)", active_readers)
-
-            for i in range(writers):
-                pid = f"W{i}"
-                procs[pid] = "BLOCKED"
-                waiting.append(pid)
-                emit("write_block", f"{pid} blocked - readers active, write_lock=True", active_readers)
-
-            while active_readers:
-                pid = active_readers.pop(0)
-                read_count -= 1
-                procs[pid] = "READY"
-                if read_count == 0:
-                    write_lock = False
-                    emit("read_release", f"{pid} is last reader - releases write_lock", active_readers)
-                else:
-                    emit("read_done", f"{pid} finishes; {read_count} reader(s) still active", active_readers)
-
-            while waiting:
-                pid = waiting.pop(0)
-                procs[pid] = "RUNNING"
-                write_lock = True
-                emit("writing", f"{pid} writes exclusively - no readers active", [pid])
-                write_lock = False
-                procs[pid] = "READY"
-                emit("write_release", f"{pid} releases write_lock", [])
-
-        for pid in procs:
-            procs[pid] = "TERMINATED"
-        emit("done", "Readers-Writers complete", [])
-        return steps, {"readers": readers, "writers": writers, "reader_sharing": True}
-
     def _monitor(self, config: dict) -> tuple[list, dict]:
         """
         Monitor with Condition Variables — signal-and-continue semantics.
@@ -1212,3 +969,206 @@ class SyncSimulator:
         procs = {k: "BLOCKED" for k in procs}
         emit("done", "Deadlock demonstration complete", True)
         return steps, {"deadlock": True, "recovery": "Break circular wait or preempt resources"}
+
+    def _livelock_demo(self, config: dict) -> tuple[list, dict]:
+        """
+        Livelock Demonstration — Mutual Deference Loop.
+
+        Reference: Silberschatz §6.6 / Tanenbaum §6.2.
+
+        Livelock differs from deadlock: the processes are NOT blocked — they
+        keep actively changing state in response to each other, yet make no
+        progress.  The classic analogy is two people meeting in a corridor,
+        each repeatedly stepping aside in the same direction.
+
+        Scenario (overly polite lock protocol):
+            P0 sets flag[0]=True, sees flag[1]=True → politely withdraws.
+            P1 sets flag[1]=True, sees flag[0]=True → politely withdraws.
+            Both retry simultaneously → the same collision repeats forever.
+
+        Resolution shown at the end: introduce ASYMMETRY (random backoff or a
+        turn variable, as Peterson's algorithm does) so one process proceeds.
+        """
+        rounds = max(2, min(int(config.get("iterations", 3)), 6))
+        steps: list[dict] = []
+        tick = 0
+        procs = {"P0": "READY", "P1": "READY"}
+        flag = [False, False]
+
+        def emit(action: str, msg: str, wq: list[str] | None = None) -> None:
+            nonlocal tick
+            steps.append(
+                self._step(
+                    tick, procs, action, msg,
+                    critical_section=[],
+                    waiting_queue=wq or [],
+                    resources={"flag[0]": flag[0], "flag[1]": flag[1]},
+                    shared_vars={"progress": 0},
+                )
+            )
+            tick += 1
+
+        emit("init", f"Livelock demo: both processes use an overly polite protocol — {rounds} collision rounds.")
+
+        for r in range(1, rounds + 1):
+            procs["P0"] = "RUNNING"; procs["P1"] = "RUNNING"
+            flag[0] = True; flag[1] = True
+            emit("intent", f"Round {r}: P0 and P1 both set their flags — both want the CS")
+            emit("conflict", f"Round {r}: P0 sees flag[1]=True; P1 sees flag[0]=True — collision detected")
+            flag[0] = False; flag[1] = False
+            procs["P0"] = "READY"; procs["P1"] = "READY"
+            emit("yield", f"Round {r}: both politely withdraw their flags and retry — no progress made", ["P0", "P1"])
+
+        emit("livelock", f"LIVELOCK: {rounds} rounds of mutual deference — processes are active but starving. "
+                         f"Unlike deadlock, they are never blocked; they just never progress.", ["P0", "P1"])
+
+        # Resolution: asymmetry breaks the cycle (this is what Peterson's turn variable does)
+        flag[0] = True
+        procs["P0"] = "RUNNING"
+        emit("resolve", "Resolution: random backoff delays P1's retry — asymmetry lets P0 enter the CS")
+        emit("enter_cs", "P0 enters the critical section — livelock broken by asymmetric retry")
+        procs = {"P0": "TERMINATED", "P1": "TERMINATED"}
+        emit("done", "Livelock demonstration complete. Fix: asymmetric retry (backoff) or a turn variable.")
+        return steps, {
+            "livelock":      True,
+            "rounds":        rounds,
+            "progress":      0,
+            "deadlock":      False,
+            "resolution":    "Random backoff / turn variable (asymmetry)",
+        }
+
+    def _starvation_demo(self, config: dict) -> tuple[list, dict]:
+        """
+        Starvation Demonstration — Indefinite Blocking under an Unfair Lock.
+
+        Reference: Silberschatz §6.6 (bounded-waiting requirement).
+
+        Starvation occurs when a runnable process waits indefinitely because
+        the arbitration policy systematically favours others.  Here, an unfair
+        lock always grants entry to the highest-priority waiter; the
+        low-priority process P3 requests the CS every round and never wins.
+
+        This is exactly why the critical-section problem requires BOUNDED
+        WAITING: a correct protocol must guarantee a limit on how many times
+        other processes can enter the CS after a process has requested entry.
+        Resolution: FIFO queueing or priority aging.
+        """
+        rounds = max(2, min(int(config.get("iterations", 3)), 6))
+        steps: list[dict] = []
+        tick = 0
+        procs = {"P1": "READY", "P2": "READY", "P3": "READY"}
+        wait_counts = {"P1": 0, "P2": 0, "P3": 0}
+
+        def emit(action: str, msg: str, cs: list[str] | None = None, wq: list[str] | None = None) -> None:
+            nonlocal tick
+            steps.append(
+                self._step(
+                    tick, procs, action, msg,
+                    critical_section=cs or [],
+                    waiting_queue=wq or [],
+                    resources={"lock_policy": "highest priority first (unfair)"},
+                    shared_vars={"P3_waits": wait_counts["P3"]},
+                )
+            )
+            tick += 1
+
+        emit("init", f"Starvation demo: unfair lock always picks the highest-priority waiter. "
+                     f"P1, P2 = high priority; P3 = low priority. {rounds} rounds.")
+
+        for r in range(1, rounds + 1):
+            emit("request", f"Round {r}: P1, P2 and P3 all request the critical section", [], ["P1", "P2", "P3"])
+            winner = "P1" if r % 2 else "P2"
+            loser_hp = "P2" if r % 2 else "P1"
+            procs[winner] = "RUNNING"
+            wait_counts["P3"] += 1
+            wait_counts[loser_hp] += 1
+            emit("enter_cs", f"Round {r}: unfair lock grants the CS to {winner} (high priority) — "
+                             f"P3 bypassed again ({wait_counts['P3']}× total)", [winner], [loser_hp, "P3"])
+            procs[winner] = "READY"
+            emit("exit_cs", f"Round {r}: {winner} leaves the CS — P3 is STILL waiting", [], ["P3"])
+
+        procs["P3"] = "BLOCKED"
+        emit("starvation", f"STARVATION: P3 requested the CS {wait_counts['P3']} time(s) and was bypassed "
+                           f"every time. With this policy it may wait forever — indefinite blocking.", [], ["P3"])
+
+        # Resolution: aging raises P3's priority until it must be served
+        procs["P3"] = "RUNNING"
+        emit("resolve", "Resolution: priority AGING — P3's effective priority rises each round it waits")
+        emit("enter_cs", "P3 finally enters the critical section — bounded waiting restored", ["P3"])
+        procs = {k: "TERMINATED" for k in procs}
+        emit("done", "Starvation demonstration complete. Fix: FIFO queueing or priority aging.")
+        return steps, {
+            "starvation":      True,
+            "starved_process": "P3",
+            "times_bypassed":  wait_counts["P3"],
+            "deadlock":        False,
+            "resolution":      "FIFO wait queue or priority aging",
+        }
+
+    def _busy_wait_demo(self, config: dict) -> tuple[list, dict]:
+        """
+        Busy Waiting Demonstration — Spinlock Burning CPU Cycles.
+
+        Reference: Silberschatz §6.5 (spinlocks) / §6.6 (semaphore motivation).
+
+        Busy waiting (spin waiting): a process repeatedly tests a lock variable
+        in a tight loop — `while (lock == LOCKED);` — consuming CPU cycles
+        while producing no useful work.  This is the problem that motivated
+        BLOCKING primitives: a semaphore puts the waiter to sleep and frees
+        the CPU for other processes.
+
+        Scenario:
+            P0 acquires the spinlock and works inside the CS for N ticks.
+            P1 spins on the lock the whole time — every spin tick is wasted CPU.
+        The summary quantifies wasted vs useful cycles.
+        """
+        cs_ticks = max(2, min(int(config.get("iterations", 3)) + 1, 8))
+        steps: list[dict] = []
+        tick = 0
+        procs = {"P0": "READY", "P1": "READY"}
+        lock = False
+        spins = 0
+
+        def emit(action: str, msg: str, cs: list[str] | None = None, wq: list[str] | None = None) -> None:
+            nonlocal tick
+            steps.append(
+                self._step(
+                    tick, procs, action, msg,
+                    critical_section=cs or [],
+                    waiting_queue=wq or [],
+                    resources={"spinlock": "LOCKED" if lock else "FREE"},
+                    shared_vars={"wasted_cpu_ticks": spins},
+                )
+            )
+            tick += 1
+
+        emit("init", "Busy waiting demo: P1 will spin on the lock while P0 holds it — watch the wasted CPU ticks.")
+
+        lock = True
+        procs["P0"] = "RUNNING"
+        emit("acquire", "P0 acquires the spinlock and enters the CS", ["P0"])
+
+        procs["P1"] = "RUNNING"  # spinning IS running — that's the problem
+        for i in range(1, cs_ticks + 1):
+            spins += 1
+            emit("busy_wait", f"P1 spins: `while (lock == LOCKED);` — test #{i} fails, "
+                              f"1 CPU tick wasted ({spins} total)", ["P0"], ["P1"])
+
+        lock = False
+        procs["P0"] = "READY"
+        emit("release", f"P0 releases the spinlock after {cs_ticks} ticks of CS work", [], ["P1"])
+
+        lock = True
+        emit("enter_cs", f"P1 finally acquires the lock — but it burned {spins} CPU ticks spinning", ["P1"])
+        lock = False
+        procs = {"P0": "TERMINATED", "P1": "TERMINATED"}
+        emit("done", f"Busy waiting demo complete: {spins} wasted tick(s) vs {cs_ticks} useful tick(s). "
+                     f"A blocking primitive (semaphore/mutex) would have wasted zero.")
+        return steps, {
+            "busy_waiting":     True,
+            "wasted_cpu_ticks": spins,
+            "useful_cs_ticks":  cs_ticks,
+            "cpu_waste_pct":    round(100 * spins / (spins + cs_ticks), 1),
+            "deadlock":         False,
+            "resolution":       "Use a blocking primitive (mutex/semaphore) instead of spinning",
+        }

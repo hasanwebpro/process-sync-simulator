@@ -19,19 +19,26 @@ from __future__ import annotations
 #   - Software-only ME solutions  : peterson, dekker
 #   - Hardware-assisted primitives: mutex, binary_semaphore, counting_semaphore
 #   - Structured high-level       : monitor
-#   - Classic OS problems         : producer_consumer, readers_writers
-#   - Demonstration scenarios     : race_condition, deadlock_demo
+#   - Problem demonstrations      : race_condition, deadlock_demo, livelock_demo,
+#                                   starvation_demo, busy_wait_demo
+#
+# Scope note: this simulator covers GENERIC synchronization problems only
+# (race condition, critical section problem, mutual exclusion violation,
+# deadlock, livelock, starvation, busy waiting). Role-based textbook models
+# (producer-consumer, readers-writers, dining philosophers, sleeping barber)
+# are intentionally out of scope.
 SYNC_ALGORITHM_NAMES: list[dict[str, str]] = [
     {"id": "peterson",           "name": "Peterson's Solution"},
     {"id": "dekker",             "name": "Dekker's Algorithm"},
     {"id": "mutex",              "name": "Mutex Lock"},
     {"id": "binary_semaphore",   "name": "Binary Semaphore"},
     {"id": "counting_semaphore", "name": "Counting Semaphore"},
-    {"id": "producer_consumer",  "name": "Producer–Consumer"},
-    {"id": "readers_writers",    "name": "Readers–Writers"},
     {"id": "monitor",            "name": "Monitor"},
-    {"id": "race_condition",     "name": "Race Condition"},
+    {"id": "race_condition",     "name": "Race Condition Demo"},
     {"id": "deadlock_demo",      "name": "Deadlock Demo"},
+    {"id": "livelock_demo",      "name": "Livelock Demo"},
+    {"id": "starvation_demo",    "name": "Starvation Demo"},
+    {"id": "busy_wait_demo",     "name": "Busy Waiting Demo"},
 ]
 
 # ---------------------------------------------------------------------------

@@ -1873,3 +1873,148 @@ label input:focus, label select:focus {
   background: rgba(255, 45, 120, 0.08);
 }
 .btn-theme-toggle .theme-icon { font-size: 0.9rem; line-height: 1; }
+
+/* ================================================================
+   Phase 4 — Enhanced report sections
+   (takeaway, key findings, observations, impact, conclusion)
+   ================================================================ */
+
+/* One-line takeaway hero */
+.report-takeaway {
+  margin: 0.9rem 0;
+  padding: 0.95rem 1.1rem;
+  background: linear-gradient(90deg, rgba(37,99,235,0.07), rgba(5,150,105,0.06));
+  border: 1.5px solid rgba(37,99,235,0.25);
+  border-left: 4px solid var(--hud-teal);
+  border-radius: 0 10px 10px 0;
+}
+.takeaway-label {
+  display: inline-block;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hud-teal);
+  margin-bottom: 0.35rem;
+}
+.takeaway-text {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Key findings */
+.findings-list { list-style: none; margin: 0.65rem 0 0; padding: 0; counter-reset: finding; }
+.finding-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.45rem;
+  background: var(--surface2, rgba(37,99,235,0.03));
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  counter-increment: finding;
+}
+.finding-item::before {
+  content: counter(finding, decimal-leading-zero);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--hud-pink);
+  padding-top: 0.15rem;
+}
+.finding-tag {
+  flex-shrink: 0;
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--hud-teal);
+  background: rgba(37,99,235,0.1);
+  border-radius: 20px;
+  padding: 0.22rem 0.55rem;
+  margin-top: 0.05rem;
+  white-space: nowrap;
+}
+.finding-text { font-size: 0.84rem; color: var(--muted); line-height: 1.55; }
+.finding-text strong { color: var(--text); }
+
+/* Observations */
+.obs-list { margin: 0.65rem 0 0 1.1rem; }
+.obs-list li {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.65;
+  margin-bottom: 0.5rem;
+}
+.obs-list li::marker { color: var(--hud-teal); }
+.obs-list strong { color: var(--text); }
+
+/* Impact analysis */
+.impact-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.7rem;
+  margin-top: 0.65rem;
+}
+@media (max-width: 700px) { .impact-grid { grid-template-columns: 1fr; } }
+.impact-card {
+  padding: 0.75rem 0.85rem;
+  border-radius: 9px;
+  border: 1.5px solid var(--border);
+  background: var(--surface2, rgba(0,0,0,0.02));
+}
+.impact-card.sev-high   { border-left: 3px solid var(--hud-pink); }
+.impact-card.sev-medium { border-left: 3px solid var(--hud-gold); }
+.impact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.impact-name { font-size: 0.8rem; font-weight: 700; color: var(--text); }
+.sev-badge {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 0.18rem 0.5rem;
+  border-radius: 20px;
+}
+.sev-badge.high   { background: rgba(214,0,110,0.12);  color: var(--hud-pink); }
+.sev-badge.medium { background: rgba(180,83,9,0.12);   color: var(--hud-gold); }
+.impact-real { font-size: 0.78rem; color: var(--muted); line-height: 1.55; }
+
+/* Recommendation action plan */
+.rec-actions-label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--hud-teal);
+  margin: 0.4rem 0 0.35rem;
+}
+.rec-actions { margin: 0 0 0 1.2rem; line-height: 1.75; color: var(--muted); font-size: 0.86rem; }
+.rec-actions strong { color: var(--text); }
+
+/* Conclusion */
+.conclusion-final {
+  padding: 1rem 1.1rem;
+  background: rgba(5,150,105,0.04);
+  border: 1.5px solid rgba(5,150,105,0.22);
+  border-radius: 10px;
+}
+.conclusion-final .report-p { margin-bottom: 0.7rem; }
+.conclusion-pill {
+  margin-top: 0.4rem;
+  padding: 0.7rem 0.9rem;
+  background: rgba(5,150,105,0.08);
+  border-left: 3px solid var(--hud-green);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.55;
+}

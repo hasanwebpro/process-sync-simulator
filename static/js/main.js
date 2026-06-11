@@ -107,7 +107,6 @@ function bindEvents() {
   _syncThemeButton();
 
   // Global controls
-  document.getElementById("btn-full-mission").addEventListener("click", runFullMission);
   document.getElementById("btn-reset-mission").addEventListener("click", resetMission);
   document.getElementById("sched-algorithm-checks").addEventListener("change", updateQuantumVisibility);
   document.getElementById("global-speed").addEventListener("input", updateSpeedLabel);
@@ -600,16 +599,13 @@ async function runPhase1() {
     `Proceed to Phase 2 to detect synchronization problems.`
   );
 
-  if (!missionRunning && document.getElementById("auto-advance").checked) {
-    renderProcessContext();
-    goToPhase(2);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  PHASE 2 — Shared Resource Access WITHOUT Synchronization
-//            Demonstrates: race conditions, CS violations, deadlocks,
-//            starvation, livelock, producer-consumer, readers-writers, etc.
+//            Detects the generic sync problems: race condition, critical
+//            section problem, mutual exclusion violation, deadlock,
+//            starvation (livelock & busy waiting demoed in Phase 3).
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function runPhase2() {
@@ -677,10 +673,6 @@ async function runPhase2() {
     ` · Proceed to Phase 3.`
   );
 
-  if (!missionRunning && document.getElementById("auto-advance").checked) {
-    renderPhase3ProblemContext();
-    goToPhase(3);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -700,7 +692,6 @@ function updateSyncAlgoDesc() {
 function getSyncSimConfig() {
   return {
     iterations:  parseInt(document.getElementById("sync-iterations").value, 10) || 2,
-    buffer_size: parseInt(document.getElementById("sync-buffer").value,     10) || 5,
     slots:       parseInt(document.getElementById("sync-slots").value,      10) || 2,
     corrected:   document.getElementById("sync-corrected").checked,
     processes:   getProcessesFromForm().length,
@@ -882,9 +873,6 @@ async function runPhase3Compare() {
     `(score ${best?.score ?? "—"}/100). Proceed to Phase 4 for the full report.`
   );
 
-  if (!missionRunning && document.getElementById("auto-advance").checked) {
-    goToPhase(4);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -964,45 +952,6 @@ function renderWorkflowSummary() {
 //  Full auto-run (all 4 phases in sequence)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function runFullMission() {
-  if (missionRunning) return;
-  missionRunning = true;
-
-  const btn = document.getElementById("btn-full-mission");
-  btn.disabled = true;
-  setFooter("Running all phases automatically…");
-
-  try {
-    goToPhase(1);
-    await runPhase1();
-    if (!phase1Result) {
-      setFooter("Stopped — Phase 1 (Scheduling) did not complete.");
-      return;
-    }
-    await Playback.sleep(Playback.getPhaseDelay(Playback.getSpeedSlider()));
-
-    renderProcessContext();
-    goToPhase(2);
-    await runPhase2();
-    if (!phase2Result) {
-      setFooter("Stopped — Phase 2 (Problem Detection) did not complete.");
-      return;
-    }
-    await Playback.sleep(Playback.getPhaseDelay(Playback.getSpeedSlider()));
-
-    renderPhase3ProblemContext();
-    goToPhase(3);
-    await runPhase3Compare();
-    await Playback.sleep(Playback.getPhaseDelay(Playback.getSpeedSlider()));
-
-    goToPhase(4);
-    await runPhase4();
-    setFooter("All phases complete. Review the Analysis & Report.");
-  } finally {
-    missionRunning = false;
-    btn.disabled = false;
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Reset — back to clean Phase 1

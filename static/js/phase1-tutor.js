@@ -52,6 +52,9 @@ const Phase1Tutor = {
       ...s,
       color: SchedulerViz.colorForPid(s.pid, i),
     }));
+    // Keep lastTimeline up-to-date so ResizeObserver can redraw on zoom
+    const entry = SchedulerViz._canvases[block.id];
+    if (entry) entry.lastTimeline = partial;
     SchedulerViz.drawGanttToEl(partial, block.canvas, block.legendEl);
   },
 

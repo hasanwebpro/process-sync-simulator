@@ -155,8 +155,9 @@ def validate_sync_algorithms(algorithms: Any) -> list[str]:
     Validate a list of synchronization algorithm IDs.
 
     Accepted IDs: peterson | dekker | mutex | binary_semaphore |
-                  counting_semaphore | producer_consumer | readers_writers |
-                  monitor | race_condition | deadlock_demo
+                  counting_semaphore | monitor | race_condition |
+                  deadlock_demo | livelock_demo | starvation_demo |
+                  busy_wait_demo
     """
     if not isinstance(algorithms, list) or not algorithms:
         raise ValidationError("Select at least one synchronization algorithm.")
@@ -198,12 +199,7 @@ def validate_sync_config(config: Any) -> dict:
     Optional keys and their allowed ranges:
         processes   [1–20]   — how many generic processes the sync demo uses
         iterations  [1–20]   — how many CS-entry cycles each demo runs
-        buffer_size [2–50]   — bounded buffer capacity (producer-consumer)
-        items       [1–200]  — total items to produce/consume
         slots       [1–20]   — counting semaphore initial slot count
-        readers     [1–10]   — number of reader processes (readers-writers)
-        writers     [1–10]   — number of writer processes
-        operations  [1–20]   — read/write operation rounds (readers-writers)
         increments  [1–50]   — increments per process (race condition demo)
         corrected   bool     — True = show mutex-protected (safe) mode
     """
@@ -218,12 +214,7 @@ def validate_sync_config(config: Any) -> dict:
     for key, (lo, hi) in {
         "processes":  (1,  20),
         "iterations": (1,  20),
-        "buffer_size":(2,  50),
-        "items":      (1,  200),
         "slots":      (1,  20),
-        "readers":    (1,  10),
-        "writers":    (1,  10),
-        "operations": (1,  20),
         "increments": (1,  50),
     }.items():
         if key in config:

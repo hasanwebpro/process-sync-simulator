@@ -92,18 +92,6 @@ class AnalysisEngine:
             "use_case": "Connection pools, limited I/O slots",
             "score": 85,
         },
-        "producer_consumer": {
-            "strengths": ["Models real pipelines", "Decouples production/consumption rates"],
-            "weaknesses": ["Buffer overflow/underflow if misconfigured", "Multiple semaphores to coordinate"],
-            "use_case": "Message queues, print spoolers, streaming pipelines",
-            "score": 90,
-        },
-        "readers_writers": {
-            "strengths": ["Maximizes read concurrency", "Protects writes"],
-            "weaknesses": ["Writer starvation possible", "Reader starvation with writer priority"],
-            "use_case": "Databases, caches, config files",
-            "score": 86,
-        },
         "monitor": {
             "strengths": ["Structured synchronization", "Condition variables avoid busy wait", "Modern and maintainable"],
             "weaknesses": ["Language/runtime support required", "Must follow monitor discipline"],
@@ -120,6 +108,24 @@ class AnalysisEngine:
             "strengths": ["Clear visualization of circular wait"],
             "weaknesses": ["System halts without recovery"],
             "use_case": "Deadlock prevention training",
+            "score": 40,
+        },
+        "livelock_demo": {
+            "strengths": ["Shows active-but-stuck processes (vs blocked deadlock)"],
+            "weaknesses": ["Processes make no progress by design"],
+            "use_case": "Understanding retry storms and backoff strategies",
+            "score": 40,
+        },
+        "starvation_demo": {
+            "strengths": ["Shows why bounded waiting matters"],
+            "weaknesses": ["Low-priority process is bypassed by design"],
+            "use_case": "Motivating FIFO queues and priority aging",
+            "score": 40,
+        },
+        "busy_wait_demo": {
+            "strengths": ["Quantifies CPU cycles wasted by spinning"],
+            "weaknesses": ["Spins by design — wastes CPU"],
+            "use_case": "Motivating blocking primitives over spinlocks",
             "score": 40,
         },
     }

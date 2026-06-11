@@ -19,14 +19,7 @@ const SchedulerViz = {
   },
 
   init() {
-    window.addEventListener("resize", () => {
-      Object.values(this._canvases).forEach(({ canvas, legendEl, lastTimeline }) => {
-        const wrap = canvas?.parentElement;
-        if (!wrap || !canvas) return;
-        canvas.width = Math.max(wrap.clientWidth - 2, 320);
-        if (lastTimeline) this.drawGanttToEl(lastTimeline, canvas, legendEl);
-      });
-    });
+    // ResizeObserver attached per-canvas in registerCanvas() — handles zoom too
   },
 
   registerCanvas(algoId, canvas, legendEl) {
@@ -34,6 +27,18 @@ const SchedulerViz = {
     canvas.width  = wrap ? Math.max(wrap.clientWidth - 2, 320) : 600;
     canvas.height = 240;
     this._canvases[algoId] = { canvas, legendEl, lastTimeline: null };
+
+    if (wrap) {
+      const ro = new ResizeObserver(() => {
+        const entry = this._canvases[algoId];
+        if (!entry || !canvas) return;
+        const newW = Math.max(wrap.clientWidth - 2, 320);
+        if (canvas.width === newW) return;
+        canvas.width = newW;
+        if (entry.lastTimeline) this.drawGanttToEl(entry.lastTimeline, canvas, legendEl);
+      });
+      ro.observe(wrap);
+    }
   },
 
   drawGanttToEl(timeline, canvas, legendEl) {

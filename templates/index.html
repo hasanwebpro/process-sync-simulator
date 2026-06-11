@@ -60,10 +60,6 @@
         <input type="checkbox" id="auto-gantt" checked>
         Auto-build Gantt
       </label>
-      <label class="ctrl-check">
-        <input type="checkbox" id="auto-advance">
-        Auto-advance phases
-      </label>
     </div>
 
     <div class="control-group speed-group">
@@ -76,7 +72,6 @@
     </div>
 
     <div class="control-group actions">
-      <button class="btn primary glow-btn" id="btn-full-mission">▶ Run All (Auto)</button>
       <button class="btn" id="btn-reset-mission">↺ Reset</button>
     </div>
 
@@ -279,11 +274,6 @@
           </label>
 
           <label>
-            Buffer size
-            <input type="number" id="sync-buffer" value="5" min="2" max="10">
-          </label>
-
-          <label>
             Semaphore slots
             <input type="number" id="sync-slots" value="2" min="1" max="5">
           </label>
@@ -437,9 +427,13 @@
 
         <!-- Report sections rendered by DiagnosticsViz.renderReport() -->
         <div id="report-executive"      class="report-section"></div>
+        <div id="report-key-findings"   class="report-section"></div>
         <div id="report-before-after"   class="report-section"></div>
+        <div id="report-observations"   class="report-section"></div>
+        <div id="report-impact"         class="report-section"></div>
         <div id="report-scheduler"      class="report-section"></div>
         <div id="report-recommendation" class="report-section"></div>
+        <div id="report-conclusion"     class="report-section"></div>
 
       </div>
 
@@ -457,7 +451,6 @@
   <script src="{{ url_for('static', filename='js/scheduler-viz.js') }}"></script>
   <script src="{{ url_for('static', filename='js/phase1-tutor.js') }}"></script>
   <script src="{{ url_for('static', filename='js/diagnostics-viz.js') }}"></script>
-  <script src="{{ url_for('static', filename='js/report-viz.js') }}"></script>
   <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
 </body>
