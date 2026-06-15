@@ -21,9 +21,15 @@ build/
 htmlcov/
 .coverage
 
-# IDE
+# IDE / editor
 .vscode/
 .idea/
+
+# Claude Code
+.claude/
+
+# Portable build artifacts
+portable-build/
 
 # OS
 .DS_Store
