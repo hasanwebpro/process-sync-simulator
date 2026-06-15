@@ -28,10 +28,10 @@ Preemptive (Round Robin, SRTF):
 
 Problem scope — GENERIC synchronization problems only
 ------------------------------------------------------
-This simulator covers the seven problems that arise naturally in any
+This simulator covers the five problems that arise naturally in any
 concurrent system: race condition, critical section problem, mutual
-exclusion violation, deadlock, livelock, starvation (indefinite blocking),
-and busy waiting (spin waiting).  Role-based textbook models
+exclusion violation, deadlock, and starvation (indefinite blocking).
+Role-based textbook models
 (producer-consumer, readers-writers, dining philosophers, sleeping barber)
 and scheduling-specific effects (convoy effect, priority inversion) are
 intentionally out of scope.
@@ -44,14 +44,9 @@ What CAN be detected from a scheduling trace
     Deadlock            — hold-and-wait on two resources for the first two processes
     Starvation          — a process waits far longer than its peers
 
-What CANNOT be detected from a generic scheduling trace
--------------------------------------------------------
-    Livelock            — requires voluntary-yield retry code (no such code exists in scheduler)
-    Busy waiting        — a property of spin-based LOCKS, not of unsynchronized execution
-
-Both non-detectable problems are demonstrated in Phase 3 via dedicated
-simulations (livelock_demo, busy_wait_demo) and are modelled in the
-technique evaluation (busy-wait CPU penalty).
+Spin-based lock penalties (busy waiting) are still modelled analytically
+in the technique evaluation — blocking primitives score higher because
+they free the CPU while waiters sleep.
 
 Technique evaluation
 --------------------
@@ -89,11 +84,6 @@ PROBLEM_META: dict[str, dict[str, str]] = {
     # Starvation: process waits far longer than peers — computed from real WT
     # values produced by the scheduler (Silberschatz §6.6).
     "starvation":       {"name": "Starvation (Indefinite Blocking)", "category": "sync"},
-    # ── Not detectable from generic scheduling traces ─────────────────────────
-    # Livelock requires voluntary-yield retry code; busy waiting is a property
-    # of spin-based locks. Both are demonstrated in Phase 3 dedicated demos.
-    "livelock":         {"name": "Livelock",                    "category": "sync"},
-    "busy_waiting":     {"name": "Busy Waiting (Spin Waiting)", "category": "sync"},
 }
 
 
@@ -181,11 +171,6 @@ def _capability(technique: str, problem: str, n_processes: int) -> str:
         wake-up ordering (Silberschatz §6.5.2). Only structured primitives
         (monitor, condition_variable) with explicit FIFO condition queues
         provide bounded waiting.
-      * Livelock — blocking primitives avoid voluntary-yield loops ("partial"),
-        but livelock cannot occur in a single-CPU sequential model at all.
-      * Busy waiting — spin-based primitives (spinlock, Peterson, Dekker)
-        ARE busy waiting; they cannot prevent it. Blocking primitives replace
-        the spin loop with a sleep — they prevent it by construction.
     """
     t = TECHNIQUE_META[technique]
     blocks   = t["blocks"]
@@ -228,23 +213,6 @@ def _capability(technique: str, problem: str, n_processes: int) -> str:
             return "prevents"    # monitor/CV: explicit FIFO condition queue
         return "partial"         # mutex/semaphore: depends on implementation
 
-    # ── Livelock ─────────────────────────────────────────────────────────────
-    # Livelock requires voluntary-yield retry loops; blocking primitives break
-    # those loops (process blocks instead of retrying). Non-blocking busy-wait
-    # primitives can participate in livelock retry loops.
-    if problem == "livelock":
-        if blocks:
-            return "prevents"    # blocking replaces retry with sleep
-        return "no"              # busy-wait can fuel retry loops
-
-    # ── Busy Waiting (spin waiting) ──────────────────────────────────────────
-    # Blocking primitives put waiters to sleep — zero spin cycles by design.
-    # Spin-based primitives (spinlock, Peterson, Dekker) ARE busy waiting.
-    if problem == "busy_waiting":
-        if blocks and not busy:
-            return "prevents"    # waiter sleeps; CPU freed (Silberschatz §6.6)
-        return "no"              # the primitive itself spins
-
     return "no"
 
 
@@ -281,8 +249,6 @@ class DiagnosticsEngine:
         problems.append(self._detect_race_and_cs(cpu_trace, norm))     # 3 entries
         problems.append(self._detect_deadlock(cpu_trace, norm, preemptive))
         problems.append(self._detect_starvation(sched, norm))
-        problems.append(self._detect_livelock(cpu_trace, norm, preemptive))
-        problems.append(self._detect_busy_waiting(cpu_trace, norm))
         # flatten (race_and_cs returns a list)
         flat: list[dict] = []
         for p in problems:
@@ -389,9 +355,8 @@ class DiagnosticsEngine:
 
     # ─────────────────────────────────────────────────────────────────────────
     # Detection methods — race condition, critical section problem, mutual
-    # exclusion violation, deadlock and starvation are derived from real
-    # scheduling data.  Livelock and busy waiting return _no_problem() stubs
-    # with explanations and pointers to their Phase 3 demonstrations.
+    # exclusion violation, deadlock, and starvation derived from real
+    # scheduling data.
     # ─────────────────────────────────────────────────────────────────────────
 
     def _detect_race_and_cs(self, trace: list[str | None], procs: list[dict]) -> list[dict]:
@@ -725,57 +690,7 @@ class DiagnosticsEngine:
             ),
         }
 
-    # ── problems not derivable from a scheduling trace — Phase 3 demos ──────
-
-    def _detect_livelock(
-        self, trace: list[str | None], procs: list[dict], preemptive: bool
-    ) -> dict:
-        """
-        Livelock cannot be detected from a CPU scheduling trace.
-
-        Real livelock (Silberschatz §6.6) requires processes to voluntarily yield
-        to each other in response to each other's state — an active, state-changing
-        cycle with no progress. A CPU scheduler preempting processes is an external
-        forced context switch, not a voluntary mutual response. There is no
-        mechanism in a generic scheduling simulation where processes detect a
-        conflict and retry — which is the defining property of livelock.
-
-        Livelock is demonstrated in Phase 3 via the dedicated Livelock Demo
-        (two processes in a mutual-deference retry loop).
-        """
-        return self._no_problem(
-            "livelock",
-            "Livelock requires processes to voluntarily respond to each other's "
-            "state in a loop — this cannot be inferred from a CPU scheduling trace. "
-            "Run the Livelock Demo in Phase 3 to see it happen.",
-        )
-
-    def _detect_busy_waiting(
-        self, trace: list[str | None], procs: list[dict]
-    ) -> dict:
-        """
-        Busy waiting cannot occur in the UNSYNCHRONIZED baseline.
-
-        Busy waiting (spin waiting, Silberschatz §6.5) is a property of the
-        synchronization MECHANISM, not of unsynchronized execution: a process
-        spins in a loop testing a lock variable. With no locks present, there
-        is nothing to spin on.
-
-        It becomes relevant the moment a spin-based solution (spinlock,
-        Peterson, Dekker) is chosen — which is why the Phase 2 technique
-        evaluation applies a busy-wait CPU penalty to those primitives, and
-        why Phase 3 includes a dedicated Busy Waiting Demo quantifying the
-        wasted CPU cycles.
-        """
-        return self._no_problem(
-            "busy_waiting",
-            "Busy waiting is a property of spin-based locks (spinlock, Peterson, "
-            "Dekker), not of unsynchronized execution — with no lock, nothing spins. "
-            "Run the Busy Waiting Demo in Phase 3 to see the wasted CPU cycles.",
-        )
-
     def _no_problem(self, pid: str, why: str) -> dict:
-        """Return a standard 'not detected / not applicable' result dict."""
         return {
             "id":          pid,
             "name":        PROBLEM_META[pid]["name"],

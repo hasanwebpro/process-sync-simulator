@@ -12,20 +12,14 @@ const DiagnosticsViz = {
     mutual_exclusion: "ME Viol",
     deadlock: "Deadlock",
     starvation: "Starve",
-    livelock: "Livelock",
-    busy_waiting: "Busy Wait",
   },
 
   SHORT_WHY: {
-    // ── Detectable from CPU scheduling traces ─────────────────────────────
     race_condition:   "Concurrent read-modify-write — one process overwrites another's result (Silberschatz §6.1).",
     critical_section: "Processes contend for the same shared resource with no entry protocol (Silberschatz §6.2).",
     mutual_exclusion: "Two processes inside the critical section simultaneously — mutual exclusion violated.",
     deadlock:         "Circular wait: each process holds what the other needs (Silberschatz §8.3).",
     starvation:       "Process waits far longer than peers — scheduler systematically bypasses it (Silberschatz §6.6).",
-    // ── Not detectable from scheduling traces — demonstrated in Phase 3 ──
-    livelock:         "Not detectable from scheduling trace (requires voluntary-yield retry code). See the Phase 3 Livelock Demo.",
-    busy_waiting:     "A property of spin-based locks, not unsynchronized execution. See the Phase 3 Busy Waiting Demo.",
   },
 
   /* ════════════════════════════════════════════════════════════════════
@@ -345,13 +339,11 @@ const DiagnosticsViz = {
 
   /** Real-world consequence of each generic synchronization problem. */
   PROBLEM_IMPACT: {
-    race_condition:   "Silent data corruption — e.g. two transactions updating the same account balance produce a wrong final amount with no error raised.",
-    critical_section: "Shared state cannot be trusted — every access to the resource needs an entry protocol before results are reliable.",
-    mutual_exclusion: "Invariants break mid-update — another process reads or writes a structure while it is in an inconsistent half-modified state.",
-    deadlock:         "System freeze — the affected processes hang forever holding their resources; recovery requires killing processes or restarting.",
-    starvation:       "Unbounded delays — a request can wait indefinitely behind favoured peers, causing timeouts and unresponsive services.",
-    livelock:         "CPU burns while nothing completes — processes stay active in a retry storm yet no work finishes.",
-    busy_waiting:     "Wasted CPU capacity — cycles spent spinning on a lock are stolen from useful work, degrading whole-system throughput.",
+    race_condition:   "Silent data corruption — two transactions updating the same balance produce a wrong result with no error raised.",
+    critical_section: "Shared state cannot be trusted — every resource access needs an entry protocol before results are reliable.",
+    mutual_exclusion: "Invariants break mid-update — another process reads a structure while it is in an inconsistent half-modified state.",
+    deadlock:         "System freeze — affected processes hang forever; recovery requires killing them or restarting.",
+    starvation:       "Unbounded delays — a request can wait indefinitely behind favoured peers, causing timeouts.",
   },
 
   _occurred(diag) {
@@ -395,15 +387,12 @@ const DiagnosticsViz = {
       <div class="conclusion-banner">
         <div class="conclusion-banner-text">
           <h4>Synchronization Analysis Report</h4>
-          <span class="conclusion-sub">Generic OS Synchronization Problems · Schedule: ${sched} · ${date}</span>
+          <span class="conclusion-sub">Schedule: ${sched} · ${date}</span>
         </div>
       </div>
       <div class="report-takeaway">
-        <span class="takeaway-label">One-line takeaway</span>
+        <span class="takeaway-label">Takeaway</span>
         <p class="takeaway-text">${this._takeaway(diag)}</p>
-      </div>
-      <div class="conclusion-summary-block">
-        <p class="conclusion-body">${rec.summary || "Run the diagnostics to generate the report."}</p>
       </div>
       ${aiHtml}`;
   },
@@ -422,8 +411,8 @@ const DiagnosticsViz = {
     findings.push({
       tag: "Detection",
       text: occurred.length
-        ? `<strong>${occurred.length} of ${total}</strong> generic synchronization problems occurred: ${occurred.map((p) => p.name).join(", ")}.`
-        : `<strong>0 of ${total}</strong> problems occurred under this schedule — the workload ran without harmful interleaving this time.`,
+        ? `<strong>${occurred.length} of ${total}</strong> problems occurred: ${occurred.map((p) => p.name).join(", ")}.`
+        : `<strong>0 of ${total}</strong> problems occurred — no harmful interleaving under this schedule.`,
     });
 
     const race = byId.race_condition;
@@ -431,28 +420,28 @@ const DiagnosticsViz = {
       const m = race.metrics || {};
       findings.push({
         tag: "Race Condition",
-        text: `<strong>${m["Lost updates"] ?? "—"} update(s) lost</strong> — the shared counter ended at ${m["Actual counter"] ?? "—"} instead of ${m["Expected counter"] ?? "—"}.`,
+        text: `<strong>${m["Lost updates"] ?? "—"} update(s) lost</strong> — counter ended at ${m["Actual counter"] ?? "—"} instead of ${m["Expected counter"] ?? "—"}.`,
       });
     }
     const me = byId.mutual_exclusion;
     if (me?.occurred) {
       findings.push({
         tag: "Mutual Exclusion",
-        text: `Two processes were inside the critical section simultaneously <strong>${(me.metrics || {})["Overlapping entries"] ?? "—"} time(s)</strong>.`,
+        text: `Two processes inside the CS simultaneously — <strong>${(me.metrics || {})["Overlapping entries"] ?? "—"} overlap(s)</strong>.`,
       });
     }
     const dl = byId.deadlock;
     if (dl?.occurred) {
       findings.push({
         tag: "Deadlock",
-        text: `Circular wait formed: <strong>${(dl.metrics || {})["Cycle"] ?? "P0↔P1"}</strong> — neither process could ever proceed.`,
+        text: `Circular wait: <strong>${(dl.metrics || {})["Cycle"] ?? "P0↔P1"}</strong> — neither process could proceed.`,
       });
     }
     const sv = byId.starvation;
     if (sv?.occurred) {
       findings.push({
         tag: "Starvation",
-        text: `Process(es) <strong>${(sv.metrics || {})["Starved"] ?? "—"}</strong> waited far beyond the average (${(sv.metrics || {})["Max waiting"] ?? "—"} vs avg ${(sv.metrics || {})["Avg waiting"] ?? "—"} ticks).`,
+        text: `<strong>${(sv.metrics || {})["Starved"] ?? "—"}</strong> waited ${(sv.metrics || {})["Max waiting"] ?? "—"} ticks vs avg ${(sv.metrics || {})["Avg waiting"] ?? "—"}.`,
       });
     }
 
@@ -460,24 +449,9 @@ const DiagnosticsViz = {
       const prevented = (best.prevented || []).length;
       findings.push({
         tag: "Best Technique",
-        text: `<strong>${best.name}</strong> scored <strong>${best.score ?? "—"}/100</strong>` +
-              (occurred.length ? `, preventing ${prevented}/${occurred.length} detected problems.` : `.`),
+        text: `<strong>${best.name}</strong> — score <strong>${best.score ?? "—"}/100</strong>` +
+              (occurred.length ? `, prevents ${prevented}/${occurred.length} problems.` : `.`),
       });
-    }
-
-    // Busy-waiting cost: compare spin-based vs blocking technique scores when available
-    const techs = diag.techniques || [];
-    const spin = techs.filter((t) => ["peterson", "dekker", "spinlock"].includes(t.technique));
-    const block = techs.filter((t) => ["mutex", "binary_semaphore", "monitor", "counting_semaphore", "condition_variable"].includes(t.technique));
-    if (spin.length && block.length) {
-      const avgSpin = spin.reduce((s, t) => s + (t.score || 0), 0) / spin.length;
-      const avgBlock = block.reduce((s, t) => s + (t.score || 0), 0) / block.length;
-      if (avgBlock > avgSpin) {
-        findings.push({
-          tag: "Busy Waiting",
-          text: `Blocking primitives outscored spin-based ones by <strong>${(avgBlock - avgSpin).toFixed(1)} points</strong> on average — spinning wastes CPU cycles that blocking returns to useful work.`,
-        });
-      }
     }
 
     el.innerHTML = `
@@ -514,69 +488,22 @@ const DiagnosticsViz = {
       : `Avg WT ${bm.avg_waiting ?? "—"} · CPU ${bm.cpu_util ?? "—"}% · overhead ${bm.overhead ?? "—"}`;
 
     el.innerHTML = `
-      <h4>Before vs After Synchronization</h4>
+      <h4>Before vs After</h4>
       <div class="ba-grid">
         <div class="ba-col ba-before">
-          <div class="ba-title">Without synchronization</div>
-          <p style="font-size:0.72rem;color:var(--muted);margin-bottom:0.4rem">
-            Problems exposed by concurrent unsynchronized access:
-          </p>
+          <div class="ba-title">Without sync — problems exposed</div>
           <ul class="ba-list">${problemList}</ul>
-          <div class="ba-metrics">
-            Avg WT ${base.avg_waiting ?? "—"} · CPU ${base.cpu_util ?? "—"}% · throughput ${base.throughput ?? "—"}
-          </div>
         </div>
         <div class="ba-col ba-after">
-          <div class="ba-title">With ${best.name || "best technique"}</div>
-          <div class="ba-sub">Problems prevented by this technique:</div>
+          <div class="ba-title">With ${best.name || "best technique"} — prevented</div>
           <ul class="ba-list">${preventedList}</ul>
-          <div class="ba-metrics">${afterMetrics}</div>
         </div>
       </div>`;
   },
 
   _reportObservations(diag) {
     const el = document.getElementById("report-observations");
-    if (!el) return;
-    const sched = (diag.scheduler?.algorithm || "").toUpperCase().replace(/_/g, " ");
-    const preemptive = !!diag.scheduler?.preemptive;
-    const base = diag.base_metrics || {};
-    const best = diag.best || {};
-    const contention = diag.contention;
-
-    const obs = [];
-    obs.push(
-      preemptive
-        ? `${sched} is <strong>preemptive</strong> — frequent context switches interleaved the processes mid-execution, which is exactly the condition under which shared-resource problems surface.`
-        : `${sched} is <strong>non-preemptive</strong> — each process ran to completion before the next started, so concurrency problems latent in the code had little chance to surface.`
-    );
-    obs.push(
-      `The scheduler <strong>exposes</strong> synchronization problems but does not cause them — the cause is unprotected access to shared resources. A different schedule can hide or reveal the same defect.`
-    );
-    if (typeof contention === "number") {
-      obs.push(
-        `Measured resource contention was <strong>${Math.round(contention * 100)}%</strong> — ${contention >= 0.5 ? "high contention amplifies lock overhead and starvation risk" : "moderate contention keeps lock overhead manageable"}.`
-      );
-    }
-    if (typeof base.fairness === "number") {
-      obs.push(
-        `Waiting-time fairness (Jain index) was <strong>${base.fairness}</strong> — ${base.fairness >= 0.85 ? "waiting time was distributed evenly across processes" : "some processes waited disproportionately long, consistent with the starvation analysis"}.`
-      );
-    }
-    if (best.name) {
-      const blocks = !["peterson", "dekker", "spinlock"].includes(best.technique);
-      obs.push(
-        blocks
-          ? `<strong>${best.name}</strong> blocks waiting processes instead of spinning — waiters consume zero CPU until the lock is released.`
-          : `<strong>${best.name}</strong> busy-waits — acceptable for very short critical sections, but it burns CPU under contention.`
-      );
-    }
-
-    el.innerHTML = `
-      <h4>Observations</h4>
-      <ul class="obs-list">
-        ${obs.map((o) => `<li>${o}</li>`).join("")}
-      </ul>`;
+    if (el) el.innerHTML = "";
   },
 
   _reportImpact(diag) {
@@ -606,7 +533,6 @@ const DiagnosticsViz = {
 
     el.innerHTML = `
       <h4>Impact Analysis</h4>
-      <p class="metrics-hint">What each detected problem would mean in a real production system.</p>
       <div class="impact-grid">${cards}</div>`;
   },
 
@@ -639,12 +565,6 @@ const DiagnosticsViz = {
     }
     el.innerHTML = `
       <h4>Scheduler Comparison</h4>
-      <p class="report-p">
-        The primary scheduler (★) was used for the problem detection above.
-        Scheduling determines execution order and interleaving — it does not
-        directly cause synchronization problems, but controls how often processes
-        compete for shared resources.
-      </p>
       <div class="table-scroll">
         <table class="metrics-table">
           <thead><tr><th>Algorithm</th><th>Avg CT</th><th>Avg TAT</th><th>Avg WT</th><th>Avg RT</th><th>Throughput</th></tr></thead>
@@ -661,23 +581,19 @@ const DiagnosticsViz = {
     const bullets = (rec.bullets || []).map((b) => `<li>${b}</li>`).join("");
     const occurred = this._occurred(diag);
 
-    // Forward-looking guidance derived from what was (or wasn't) detected
     const actions = [];
-    actions.push(`Protect every shared-resource access with <strong>${best.name || "a blocking primitive"}</strong> — never rely on scheduling order for correctness.`);
+    actions.push(`Use <strong>${best.name || "a blocking primitive"}</strong> to protect every shared-resource access — never rely on scheduling order.`);
     if (occurred.some((p) => p.id === "deadlock")) {
-      actions.push(`Enforce a <strong>global lock-ordering discipline</strong> — deadlock prevention requires acquiring resources in a fixed order (no primitive prevents it automatically).`);
+      actions.push(`Enforce <strong>global lock-ordering</strong> — acquire resources in a fixed order to break circular wait.`);
     }
     if (occurred.some((p) => p.id === "starvation")) {
-      actions.push(`Use <strong>FIFO wait queues or priority aging</strong> so no process can be bypassed indefinitely (bounded waiting).`);
+      actions.push(`Use <strong>FIFO queues or priority aging</strong> to bound waiting time.`);
     }
-    actions.push(`Avoid spin-based locks (Peterson, Dekker, spinlocks) for long critical sections — prefer blocking primitives that free the CPU.`);
-    actions.push(`Keep critical sections <strong>as short as possible</strong> — less time holding a lock means less contention, lower overhead, and fewer starvation opportunities.`);
+    actions.push(`Keep critical sections <strong>short</strong> — less hold time means less contention and lower overhead.`);
 
     el.innerHTML = `
       <h4>Recommendations</h4>
       <div class="rec-box">
-        <ul class="rec-list">${bullets}</ul>
-        <p class="rec-actions-label">Action plan</p>
         <ol class="rec-actions">
           ${actions.map((a) => `<li>${a}</li>`).join("")}
         </ol>
@@ -693,28 +609,17 @@ const DiagnosticsViz = {
     const prevented = (best.prevented || []).length;
 
     const body = occurred.length
-      ? `This four-phase analysis demonstrated the complete synchronization workflow. ` +
-        `Phase 1 fixed the execution interleaving under ${sched}; Phase 2 showed that the same workload, ` +
-        `run without protection, suffered ${occurred.length} generic synchronization problem(s) ` +
-        `(${occurred.map((p) => p.name).join(", ")}); Phase 3 applied each mechanism to that exact workload ` +
-        `and measured the result. <strong>${best.name || "The best technique"}</strong> provided the strongest ` +
-        `protection — preventing ${prevented} of ${occurred.length} detected problems with a score of ` +
-        `${best.score ?? "—"}/100.`
-      : `This four-phase analysis demonstrated the complete synchronization workflow. Under ${sched}, ` +
-        `the unsynchronized run happened to complete without incident — a reminder that absence of failure ` +
-        `is not proof of correctness. The same code, under a different schedule, can corrupt data.`;
+      ? `Phase 1 fixed execution order under ${sched}; Phase 2 showed ${occurred.length} problem(s) ` +
+        `(${occurred.map((p) => p.name).join(", ")}) when running without protection; Phase 3 applied each ` +
+        `mechanism to the same workload. <strong>${best.name || "The best technique"}</strong> prevented ` +
+        `${prevented} of ${occurred.length} problems (score ${best.score ?? "—"}/100).`
+      : `Under ${sched}, no problems surfaced — but correctness must never depend on scheduling luck. ` +
+        `The same code, under a different schedule, can corrupt data or deadlock.`;
 
     el.innerHTML = `
       <h4>Conclusion</h4>
       <div class="conclusion-final">
         <p class="report-p">${body}</p>
-        <p class="report-p">
-          The decisive lesson is that <strong>correctness must come from explicit synchronization,
-          never from fortunate scheduling</strong>. A race condition that stays hidden for a thousand runs
-          is still a defect; one re-ordered context switch is enough to corrupt data, deadlock the system,
-          or starve a process. Blocking primitives with bounded waiting remain the engineering standard
-          for protecting shared resources.
-        </p>
         <div class="conclusion-pill">${this._takeaway(diag)}</div>
       </div>`;
   },

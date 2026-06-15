@@ -8,7 +8,7 @@
   --surface2: #F0F4FF;
   --border:   #B8C8F8;
   --text:     #12103A;
-  --muted:    #3D4E72;
+  --muted:    #1A2545;
   --accent:   #D6006E;
   --accent2:  #1D4ED8;
   --success:  #047857;
@@ -411,6 +411,7 @@ label input:focus, label select:focus {
 .metrics-hint { font-size: 0.74rem; color: var(--muted); margin-bottom: 0.5rem; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 .algo-desc { margin-top: 0.75rem; font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
+.input-hint { display: block; font-size: 0.72rem; color: var(--muted); margin: 0.15rem 0 0.25rem; line-height: 1.4; }
 
 /* ================================================================
    Process input table
@@ -1406,15 +1407,15 @@ label input:focus, label select:focus {
   border-top: 1.5px solid var(--border);
 }
 .report-section h4 {
-  font-size: 0.82rem;
-  font-weight: 700;
+  font-size: 0.95rem;
+  font-weight: 800;
   color: var(--hud-teal);
   margin-bottom: 0.65rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
 }
 .report-lead { font-size: 1.05rem; line-height: 1.8; color: var(--text); font-weight: 500; }
-.report-p    { line-height: 1.75; color: var(--muted); margin-bottom: 0.65rem; font-size: 0.95rem; font-weight: 500; }
+.report-p    { line-height: 1.75; color: var(--text); margin-bottom: 0.65rem; font-size: 0.95rem; font-weight: 500; }
 
 .conclusion-banner {
   display: flex;
@@ -1444,7 +1445,7 @@ label input:focus, label select:focus {
 }
 .conclusion-hero      { font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 0.65rem; }
 .conclusion-highlight { font-size: 0.9rem; color: var(--hud-pink); margin-bottom: 0.45rem; padding-left: 0.7rem; border-left: 2px solid var(--hud-pink); }
-.conclusion-body      { font-size: 0.86rem; color: var(--muted); margin-bottom: 0.35rem; }
+.conclusion-body      { font-size: 0.86rem; color: var(--text); font-weight: 500; margin-bottom: 0.35rem; }
 
 .highlight-box {
   padding: 0.8rem 0.95rem;
@@ -1505,8 +1506,7 @@ label input:focus, label select:focus {
 .ba-before .ba-title { color: var(--hud-pink); }
 .ba-after  .ba-title { color: var(--hud-green); }
 .ba-sub     { font-size: 0.7rem; color: var(--muted); margin-bottom: 0.2rem; }
-.ba-list    { margin: 0 0 0.65rem 1rem; font-size: 0.8rem; line-height: 1.55; color: var(--text); }
-.ba-metrics { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); padding-top: 0.45rem; border-top: 1px solid var(--border); }
+.ba-list    { margin: 0 0 0 1rem; font-size: 0.86rem; line-height: 1.6; color: var(--text); font-weight: 500; }
 
 /* ================================================================
    Rankings
@@ -1810,7 +1810,7 @@ label input:focus, label select:focus {
   --surface2: #1A1538;
   --border:   #2E2260;
   --text:     #F0E8FF;
-  --muted:    #A890CC;
+  --muted:    #CDBFEB;
   --accent:   #FF3D87;
   --accent2:  #60A5FA;
   --success:  #34D399;
@@ -1938,8 +1938,8 @@ label input:focus, label select:focus {
   margin-top: 0.05rem;
   white-space: nowrap;
 }
-.finding-text { font-size: 0.84rem; color: var(--muted); line-height: 1.55; }
-.finding-text strong { color: var(--text); }
+.finding-text { font-size: 0.88rem; color: var(--text); line-height: 1.55; font-weight: 500; }
+.finding-text strong { color: var(--hud-pink); }
 
 /* Observations */
 .obs-list { margin: 0.65rem 0 0 1.1rem; }
@@ -1985,7 +1985,7 @@ label input:focus, label select:focus {
 }
 .sev-badge.high   { background: rgba(214,0,110,0.12);  color: var(--hud-pink); }
 .sev-badge.medium { background: rgba(180,83,9,0.12);   color: var(--hud-gold); }
-.impact-real { font-size: 0.78rem; color: var(--muted); line-height: 1.55; }
+.impact-real { font-size: 0.82rem; color: var(--text); line-height: 1.55; font-weight: 500; }
 
 /* Recommendation action plan */
 .rec-actions-label {
@@ -1996,8 +1996,8 @@ label input:focus, label select:focus {
   color: var(--hud-teal);
   margin: 0.4rem 0 0.35rem;
 }
-.rec-actions { margin: 0 0 0 1.2rem; line-height: 1.75; color: var(--muted); font-size: 0.86rem; }
-.rec-actions strong { color: var(--text); }
+.rec-actions { margin: 0 0 0 1.2rem; line-height: 1.75; color: var(--text); font-size: 0.88rem; font-weight: 500; }
+.rec-actions strong { color: var(--hud-pink); }
 
 /* Conclusion */
 .conclusion-final {

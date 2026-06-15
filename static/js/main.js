@@ -691,10 +691,9 @@ function updateSyncAlgoDesc() {
 
 function getSyncSimConfig() {
   return {
-    iterations:  parseInt(document.getElementById("sync-iterations").value, 10) || 2,
-    slots:       parseInt(document.getElementById("sync-slots").value,      10) || 2,
-    corrected:   document.getElementById("sync-corrected").checked,
-    processes:   getProcessesFromForm().length,
+    iterations: parseInt(document.getElementById("sync-iterations").value, 10) || 2,
+    slots:      parseInt(document.getElementById("sync-slots").value,      10) || 2,
+    processes:  getProcessesFromForm().length,
   };
 }
 
@@ -743,12 +742,14 @@ async function simulateSync() {
   SyncViz.setSteps(steps, formatAlgoName(algoId));
   setSimControls(true);
 
+  // Unlock compare button now that at least one simulation has run
+  const compareBtn = document.getElementById("btn-phase3-compare");
+  if (compareBtn) compareBtn.disabled = false;
+
   if (document.getElementById("slow-teach-mode")?.checked) {
     SyncViz.startPlay();
   }
 
-  // Allow proceeding to Phase 4 once a simulation has run — Phase 4 can use
-  // phase2Result data even without the full technique comparison.
   if (phase2Result) {
     document.getElementById("proceed-phase4").style.display = "";
   }

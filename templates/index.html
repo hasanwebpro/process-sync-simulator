@@ -270,17 +270,14 @@
 
           <label>
             Iterations
+            <span class="input-hint">How many times each process enters the critical section.</span>
             <input type="number" id="sync-iterations" value="2" min="1" max="5">
           </label>
 
           <label>
             Semaphore slots
+            <span class="input-hint">Max processes allowed inside the critical section at once (counting semaphore only).</span>
             <input type="number" id="sync-slots" value="2" min="1" max="5">
-          </label>
-
-          <label class="checkbox-label">
-            <input type="checkbox" id="sync-corrected">
-            Safe race (mutex)
           </label>
 
           <div class="btn-row stacked">
@@ -371,7 +368,7 @@
         </p>
         <div id="technique-best-banner" class="best-tech-banner"></div>
         <div class="btn-row">
-          <button class="btn primary glow-btn" id="btn-phase3-compare">
+          <button class="btn primary glow-btn" id="btn-phase3-compare" disabled>
             Compare All Techniques
           </button>
         </div>
